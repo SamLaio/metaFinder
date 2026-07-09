@@ -1,0 +1,27 @@
+[project]
+name = "metafinder"
+version = "0.1.0"
+description = "Find and normalize Traditional Chinese book metadata candidates."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "beautifulsoup4>=4.12",
+  "lxml>=5",
+  "opencc-python-reimplemented>=0.1.7",
+  "requests>=2.31",
+]
+
+[project.scripts]
+metafinder = "metafinder.cli:main"
+metafinder-import-replacements = "metafinder.import_replacements:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+metafinder = ["custom_replacements.tsv"]
