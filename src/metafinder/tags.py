@@ -166,26 +166,24 @@ def infer_tags(metadata: BookMetadata, extra_text: str | None = None) -> TagInfe
     itself a trusted award-record page.
     """
 
-    text = _join_text(
+    genre_text = _join_text(
         [
             metadata.title,
             metadata.subtitle,
-            *metadata.authors,
-            *metadata.translators,
-            metadata.publisher,
             metadata.description,
             *(metadata.tags or []),
             extra_text,
         ]
     )
+    region_text = _join_text([metadata.publisher, *(metadata.tags or [])])
     tags = _dedupe(short_tags(metadata.tags))
 
     for tag, needles in REGION_PATTERNS:
-        if _contains_any(text, needles):
+        if _contains_any(region_text, needles):
             _append(tags, tag)
 
     for tag, needles in GENRE_PATTERNS:
-        if _contains_any(text, needles):
+        if _contains_any(genre_text, needles):
             _append(tags, tag)
 
     return TagInference(tags=tags[:12], awards=[])

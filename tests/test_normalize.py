@@ -48,12 +48,23 @@ def test_infer_tags_from_metadata_text():
         authors=["Chugong"],
         publisher="知翎文化",
         description="韓國奇幻冒險小說，描述獵人與地下城的異能戰鬥。",
+        tags=["韓國"],
     )
     result = infer_tags(meta)
     assert "韓國" in result.tags
     assert "奇幻" in result.tags
     assert "冒險" in result.tags
     assert "異能" in result.tags
+    assert "小說" in result.tags
+
+
+def test_region_tags_do_not_come_from_description_places():
+    meta = BookMetadata(description="故事橫跨美國、英國與義大利，是一部懸疑小說。")
+    result = infer_tags(meta)
+    assert "美國" not in result.tags
+    assert "英國" not in result.tags
+    assert "義大利" not in result.tags
+    assert "懸疑" in result.tags
     assert "小說" in result.tags
 
 

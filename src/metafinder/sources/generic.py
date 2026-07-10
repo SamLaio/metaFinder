@@ -75,7 +75,7 @@ class GenericPageParser:
 
         source_name, source_kind = source_info(url)
         page_text = soup.get_text("\n", strip=True)
-        tag_info = infer_tags(metadata, extra_text=page_text)
+        tag_info = infer_tags(metadata)
         metadata.tags = tag_info.tags
         awards = infer_awards_from_trusted_record(url, metadata, page_text)
         metadata.awards = awards_as_dict(awards)
