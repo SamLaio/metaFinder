@@ -1,6 +1,6 @@
 [project]
 name = "metafinder"
-version = "0.1.0"
+version = "0.1.1"
 description = "Find and normalize Traditional Chinese book metadata candidates."
 readme = "README.md"
 license = { file = "LICENSE" }
