@@ -54,15 +54,20 @@ def to_traditional(text: str | None) -> str | None:
     if not text:
         return text
     converter = _get_converter()
-    converted = text
+    converted = _apply_custom_replacements(text)
     if converter:
         try:
-            converted = converter.convert(text)
+            converted = converter.convert(converted)
         except Exception:
             pass
-    for old, new in CUSTOM_REPLACEMENTS:
-        converted = converted.replace(old, new)
+    converted = _apply_custom_replacements(converted)
     return converted
+
+
+def _apply_custom_replacements(text: str) -> str:
+    for old, new in CUSTOM_REPLACEMENTS:
+        text = text.replace(old, new)
+    return text
 
 
 def clean_text(text: str | None) -> str | None:

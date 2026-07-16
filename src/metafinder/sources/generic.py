@@ -115,7 +115,7 @@ class GenericPageParser:
                 metadata.published_date = metadata.published_date or clean_text(_string(date))
                 isbn = normalize_isbn(_string(item.get("isbn")))
                 metadata.isbn = metadata.isbn or isbn
-                image = _string(item.get("image"))
+                image = _image_value(item.get("image"))
                 if image:
                     metadata.cover_url = metadata.cover_url or image
                 authors = _names_field(item.get("author"))
@@ -126,7 +126,7 @@ class GenericPageParser:
     def _from_meta_tags(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         title = _meta_content(soup, ["og:title", "twitter:title", "title"])
         description = _meta_content(soup, ["og:description", "description", "twitter:description"])
-        image = _meta_content(soup, ["og:image", "twitter:image"])
+        image = _meta_content(soup, ["og:image", "og:image:secure_url", "twitter:image", "twitter:image:src", "image"])
         metadata.title = metadata.title or clean_title(title or (soup.title.get_text(" ", strip=True) if soup.title else None))
         metadata.description = metadata.description or clean_text(description)
         if image and not metadata.cover_url:
@@ -184,7 +184,7 @@ class GenericPageParser:
         candidates: list[str] = []
         for img in soup.find_all("img"):
             alt = img.get("alt") or ""
-            src = img.get("src") or img.get("data-src") or img.get("data-original")
+            src = _image_src(img)
             if not src:
                 continue
             haystack = f"{alt} {src}".lower()
@@ -264,6 +264,25 @@ def _string(value: Any) -> str | None:
     if isinstance(value, dict):
         return _string(value.get("name") or value.get("@id") or value.get("url"))
     return str(value)
+
+
+def _image_value(value: Any) -> str | None:
+    if isinstance(value, dict):
+        return _string(value.get("url") or value.get("contentUrl") or value.get("@id") or value.get("name"))
+    return _string(value)
+
+
+def _image_src(img) -> str | None:
+    for attr in ["src", "data-src", "data-original", "data-lazy-src", "data-lazyload", "data-actualsrc", "data-url"]:
+        value = img.get(attr)
+        if value:
+            return value
+    srcset = img.get("srcset") or img.get("data-srcset")
+    if srcset:
+        first = srcset.split(",", 1)[0].strip()
+        if first:
+            return first.split()[0]
+    return None
 
 
 def _name_field(value: Any) -> str | None:

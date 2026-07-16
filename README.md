@@ -96,6 +96,10 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 8. 其他候選頁
 
 工具會把搜尋結果解析成候選清單並打分。分數只協助排序，不代表一定正確；整理書庫時仍應檢查候選來源是否可靠。
+當查詢同時包含完整書名與作者時，完整命中書名與作者的候選會優先於只命中部分泛詞的候選。
+如果多詞查詢只命中單一泛詞，工具會把它視為不可靠候選並排除；這時應記錄為 `No candidates found`，再由整理流程進行人工驗證。
+針對晉江等網路小說頁常見的 `《書名》作者_站名` 標題格式，工具會抽取書名號中的核心書名輔助排序。
+對晉江作品會額外嘗試 `晉江文學城`、`晋江文学城` 與 `jjwxc` 查詢提示，並辨識 `onebook.php?novelid=`、`m.jjwxc.net/book2/`、`wap.jjwxc.net/book2/` 這類官方作品頁 URL。
 
 ## 輸出欄位
 
@@ -106,6 +110,7 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 - `source_kind`：來源類型，例如 `publisher`、`store`、`government`、`web-novel`。
 - `score`：候選排序分數，只用來排序，不代表絕對正確。
 - `evidence`：解析依據，例如 `meta-tags`、`json-ld`、`visible-labels`。
+- `cover_url`：若候選頁有找到封面，會在候選頂層直接輸出封面 URL，方便批次腳本取用。
 - `metadata.title`：書名。
 - `metadata.authors`：作者清單。
 - `metadata.translators`：譯者清單。
@@ -115,7 +120,7 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 - `metadata.description`：簡介。
 - `metadata.tags`：短標籤候選。
 - `metadata.awards`：只在目前來源頁本身是可信得獎紀錄時輸出，包含 `name`、`status`、`international`、`evidence`、`source_name`、`source_url`。
-- `metadata.cover_url`：封面 URL。
+- `metadata.cover_url`：封面 URL，內容與頂層 `cover_url` 相同。
 
 ## Calibre 慣例
 
@@ -144,6 +149,7 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 
 如果未來只需要修少數專案特有詞彙，建議先在 `src/metafinder/normalize.py` 做一層很小的前後處理替換，成本最低，也最容易回退。
 對應的來源檔是 `[src/metafinder/custom_replacements.tsv](D:/project/metaFinder/src/metafinder/custom_replacements.tsv)`，直接補 `原詞<TAB>翻譯` 就行，或用 `metafinder-import-replacements` 匯入整理好的 txt。
+自訂替換會在 OpenCC 轉換前後各套用一次，所以簡體 key 與正體 key 都能命中。
 
 如果真的需要擴充成一整套自訂詞庫，因為這個套件本身沒有提供自訂字典路徑參數，做法通常是：
 

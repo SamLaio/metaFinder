@@ -31,6 +31,9 @@ BOOK_URL_PATTERNS = [
     re.compile(r"https?://(?:www\.)?ching-win\.com\.tw/product-detail/[0-9A-Za-z_-]+"),
     re.compile(r"https?://book\.moc\.gov\.tw/book/new/books-detail/\?id=\d+"),
     re.compile(r"https?://ixdzs8?\.com/read/\d+/?"),
+    re.compile(r"https?://(?:www\.)?jjwxc\.net/onebook\.php\?novelid=\d+"),
+    re.compile(r"https?://m\.jjwxc\.net/book2/\d+/?"),
+    re.compile(r"https?://wap\.jjwxc\.net/book2/\d+/?"),
 ]
 
 

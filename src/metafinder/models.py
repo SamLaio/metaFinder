@@ -70,5 +70,6 @@ class BookCandidate:
             "source_kind": self.source_kind,
             "score": round(self.score, 2),
             "evidence": self.evidence,
+            "cover_url": self.metadata.cover_url,
             "metadata": self.metadata.as_dict(),
         }

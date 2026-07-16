@@ -32,6 +32,7 @@ def test_clean_text_decodes_html_entities():
 
 def test_custom_replacements_apply_after_opencc():
     assert clean_text("一出") == "一齣"
+    assert clean_text("实时") == "即時"
 
 
 def test_volume_title_from_trailing_number():
