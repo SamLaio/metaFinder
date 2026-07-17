@@ -100,6 +100,7 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 如果多詞查詢只命中單一泛詞，工具會把它視為不可靠候選並排除；這時應記錄為 `No candidates found`，再由整理流程進行人工驗證。
 針對晉江等網路小說頁常見的 `《書名》作者_站名` 標題格式，工具會抽取書名號中的核心書名輔助排序。
 對晉江作品會額外嘗試 `晉江文學城`、`晋江文学城` 與 `jjwxc` 查詢提示，並辨識 `onebook.php?novelid=`、`m.jjwxc.net/book2/`、`wap.jjwxc.net/book2/` 這類官方作品頁 URL。
+對番茄小說作品頁會辨識 `fanqienovel.com/page/<id>`，並從頁面可見欄位抽取書名、作者、類型標籤、最新更新時間與簡介。
 
 ## 輸出欄位
 

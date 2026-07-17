@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from html import unescape
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -27,6 +28,7 @@ SOURCE_HINTS = {
     "gagagabunko.jp": ("小學館 Gagaga", "publisher"),
     "book.moc.gov.tw": ("文化部", "government"),
     "ncl.edu.tw": ("國家圖書館", "government"),
+    "fanqienovel.com": ("番茄小說", "web-novel"),
     "ttkan.co": ("天天看小說", "web-novel"),
     "ixdzs.com": ("愛下電子書", "web-novel"),
     "ixdzs8.com": ("愛下電子書", "web-novel"),
@@ -69,6 +71,7 @@ class GenericPageParser:
 
         self._from_json_ld(soup, metadata, evidence)
         self._from_meta_tags(soup, url, metadata, evidence)
+        self._from_fanqie_page(soup, url, metadata, evidence)
         self._from_visible_labels(soup, metadata, evidence)
         self._from_images(soup, url, metadata, evidence)
         self._cleanup(metadata)
@@ -177,6 +180,46 @@ class GenericPageParser:
         if found:
             evidence.append("visible-labels")
 
+    def _from_fanqie_page(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        host = urlparse(url).netloc.lower()
+        if not (host == "fanqienovel.com" or host.endswith(".fanqienovel.com")):
+            return
+
+        found = False
+        title = soup.select_one("h1")
+        if title:
+            metadata.title = clean_title(title.get_text(" ", strip=True)) or metadata.title
+            found = True
+
+        author = soup.select_one(".author-name-text")
+        if author:
+            metadata.authors = split_people(author.get_text(" ", strip=True)) or metadata.authors
+            found = True
+
+        labels = [clean_text(node.get_text(" ", strip=True)) for node in soup.select(".info-label span, .info-label-grey, .info-label-yellow")]
+        if labels:
+            metadata.tags = short_tags([label for label in labels if label and label not in {"已完結", "連載中"}]) or metadata.tags
+            found = True
+
+        updated = soup.select_one(".info-last-time")
+        if updated and not metadata.published_date:
+            metadata.published_date = clean_text(updated.get_text(" ", strip=True))
+            found = True
+
+        abstract = soup.select_one(".page-abstract-content")
+        if abstract:
+            metadata.description = clean_text(abstract.get_text(" ", strip=True)) or metadata.description
+            found = True
+
+        if not metadata.cover_url:
+            image = _fanqie_cover_url(soup)
+            if image:
+                metadata.cover_url = image
+                found = True
+
+        if found:
+            evidence.append("fanqie-page")
+
     def _from_images(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         if metadata.cover_url:
             metadata.cover_url = urljoin(url, metadata.cover_url)
@@ -282,6 +325,15 @@ def _image_src(img) -> str | None:
         first = srcset.split(",", 1)[0].strip()
         if first:
             return first.split()[0]
+    return None
+
+
+def _fanqie_cover_url(soup: BeautifulSoup) -> str | None:
+    text = "\n".join(script.get_text() or "" for script in soup.find_all("script"))
+    for pattern in [r'"thumbUrl"\s*:\s*"([^"]+)"', r'"image"\s*:\s*\[\s*"([^"]+)"']:
+        match = re.search(pattern, text)
+        if match:
+            return unescape(match.group(1)).replace("\\u002F", "/")
     return None
 
 

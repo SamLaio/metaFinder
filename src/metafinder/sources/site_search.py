@@ -34,6 +34,7 @@ BOOK_URL_PATTERNS = [
     re.compile(r"https?://(?:www\.)?jjwxc\.net/onebook\.php\?novelid=\d+"),
     re.compile(r"https?://m\.jjwxc\.net/book2/\d+/?"),
     re.compile(r"https?://wap\.jjwxc\.net/book2/\d+/?"),
+    re.compile(r"https?://fanqienovel\.com/page/\d+/?"),
 ]
 
 
