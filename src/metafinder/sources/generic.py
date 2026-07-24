@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from metafinder.models import BookCandidate, BookMetadata
 from metafinder.normalize import clean_text, clean_title, normalize_isbn, short_tags, split_people
+from metafinder.series import infer_series_from_title
 from metafinder.sources.web_search import USER_AGENT
 from metafinder.tags import apply_awards_to_tags, awards_as_dict, infer_awards_from_trusted_record, infer_tags
 
@@ -249,6 +250,11 @@ class GenericPageParser:
         metadata.language = clean_text(metadata.language)
         metadata.description = clean_text(metadata.description)
         metadata.tags = short_tags(metadata.tags)
+        if metadata.title and not metadata.series:
+            series = infer_series_from_title(metadata.title)
+            if series:
+                metadata.series = series.name
+                metadata.series_index = series.index
 
     def _score(
         self,

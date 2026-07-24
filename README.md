@@ -9,6 +9,7 @@ License: GNU General Public License v3.0
 - 以書名、作者或 ISBN 查找候選資料頁。
 - 優先找官方或主要書店/平台來源。
 - 解析書名、作者、譯者、出版社、出版日、ISBN/eISBN、簡介、標籤、封面 URL。
+- 從常見書名格式解析系列名稱與集數，例如 `～系列之三`、`PART9`、`NO.4`。
 - 使用專案內相依的 `opencc-python-reimplemented` 的 `OpenCC('s2tw')` 將簡體資料轉成臺灣正體。
 - 保留多個候選來源與分數，不自動推測 Calibre 的來源欄位。
 
@@ -97,6 +98,8 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 
 工具會把搜尋結果解析成候選清單並打分。分數只協助排序，不代表一定正確；整理書庫時仍應檢查候選來源是否可靠。
 當查詢同時包含完整書名與作者時，完整命中書名與作者的候選會優先於只命中部分泛詞的候選。
+當查詢同時包含書名與作者時，不能只因作者命中就接受候選；候選必須至少命中一個書名核心詞，避免同作者不同作品被誤收。
+部分來源會把頁面標題寫成 `書名 - 作者`；比對書名核心詞時會先移除尾端作者，避免作者詞被誤算成標題命中。
 如果多詞查詢只命中單一泛詞，工具會把它視為不可靠候選並排除；這時應記錄為 `No candidates found`，再由整理流程進行人工驗證。
 針對晉江等網路小說頁常見的 `《書名》作者_站名` 標題格式，工具會抽取書名號中的核心書名輔助排序。
 對晉江作品會額外嘗試 `晉江文學城`、`晋江文学城` 與 `jjwxc` 查詢提示，並辨識 `onebook.php?novelid=`、`m.jjwxc.net/book2/`、`wap.jjwxc.net/book2/` 這類官方作品頁 URL。
@@ -118,6 +121,7 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 - `metadata.publisher`：出版社。
 - `metadata.published_date`：來源頁日期字串。
 - `metadata.isbn` / `metadata.eisbn`：紙本 ISBN / 電子 ISBN。
+- `metadata.series` / `metadata.series_index`：從來源標題或頁面書名推得的系列名稱與集數；這是候選值，寫入 Calibre 前仍需核對。
 - `metadata.description`：簡介。
 - `metadata.tags`：短標籤候選。
 - `metadata.awards`：只在目前來源頁本身是可信得獎紀錄時輸出，包含 `name`、`status`、`international`、`evidence`、`source_name`、`source_url`。
@@ -137,6 +141,8 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 - 找不到候選時，CLI 會顯示 `No candidates found.` 並以 exit code `1` 結束。
 - 直接 URL 解析比關鍵字搜尋可靠；整理書庫時若已知來源頁，優先貼 URL。
 - `source_url` 是查證用來源，不要拿來自動填 Calibre 的 `來源` custom column。
+- `series` / `series_index` 只從明確格式解析，例如 `～鳳凰奇俠之五`、`【小肥肥的猛男日記 PART9】`、`City Hunter NO.4`；不會從模糊簡介或人物關係臆測系列。
+- 系列證據有優先序：明確嵌在書名中的系列標記最高，作品表/來源頁系列欄位其次；單純上下冊或尾端數字只作弱證據，避免把單本書名本體誤判成系列名。
 - `published_date` 沒有自動轉 UTC；寫入 Calibre 時要依書庫慣例處理時區。
 - `score` 只是排序輔助；高分候選仍可能是同名書或搜尋頁推薦項，使用前要人工確認。
 - 封面 URL 可能是低解析、站方占位圖或 R18 占位圖；換封面前要先看圖。
@@ -173,6 +179,15 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
   - `我獨自升級8` -> `08 我獨自升級`
   - `書名(12)` -> `12 書名`
 - 同時把共享書名視為 series title，尾端數字視為 `series_index`。
+- 常見系列標題格式會解析為 `metadata.series` / `metadata.series_index`：
+  - `巧玉玲瓏～鳳凰奇俠之五` -> `鳳凰奇俠 #5`
+  - `寶貝大猛男(下)【小肥肥的猛男日記 PART9】` -> `小肥肥的猛男日記 #9`
+  - `木頭猛男追新娘～City Hunter NO.4` -> `City Hunter #4`
+  - `黑魔王傳說 Part 2` -> `黑魔王傳說 #2`
+- 系列候選衝突時，`series_evidence_priority()` 會讓可靠證據優先：
+  - `【小肥肥的猛男日記 PART9】` 這種明確系列資訊高於外部資料。
+  - 外部作品表系列欄位高於單純 `(上)/(下)` 或尾端集數拆法。
+  - `溫馨` 這類常見分類字樣會被視為較弱證據，不覆蓋明確書名系列。
 - Readmoo 等電子書頁若同時出現 `eISBN` 與 `ISBN`，兩者要分開解析：
   - `eISBN` 寫入電子 ISBN。
   - 獨立的 `ISBN` 才寫入紙本 ISBN。

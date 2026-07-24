@@ -108,7 +108,22 @@ def _candidate_matches_query(candidate: BookCandidate, query: str) -> bool:
         if value
     ).lower()
     matched_tokens = [token for token in tokens if token in haystack]
+    title = _title_for_matching(candidate)
+    core_title = _core_title(title)
+    author_matches = [
+        author.lower()
+        for author in candidate.metadata.authors
+        if author and author.lower() in query.lower()
+    ]
+    title_tokens = [token for token in tokens if token not in set(author_matches)]
+    matched_title_tokens = [
+        token
+        for token in title_tokens
+        if token in title or token in core_title
+    ]
     if len(tokens) >= 2:
+        if author_matches and not matched_title_tokens and not (core_title and core_title in query.lower()):
+            return False
         return _candidate_query_rank(candidate, query) > 0 or len(matched_tokens) >= 2
     return bool(matched_tokens)
 
@@ -116,7 +131,7 @@ def _candidate_matches_query(candidate: BookCandidate, query: str) -> bool:
 def _candidate_query_rank(candidate: BookCandidate, query: str) -> int:
     """Prefer exact title+author matches over loose token matches."""
 
-    title = (clean_title(candidate.metadata.title) or "").lower()
+    title = _title_for_matching(candidate)
     core_title = _core_title(title)
     authors = " ".join(candidate.metadata.authors).lower()
     query_text = (clean_title(query) or query).lower()
@@ -144,4 +159,13 @@ def _core_title(title: str) -> str:
     match = re.search(r"《([^》]+)》", title)
     if match:
         return match.group(1).strip().lower()
+    return title
+
+
+def _title_for_matching(candidate: BookCandidate) -> str:
+    title = (clean_title(candidate.metadata.title) or "").lower()
+    for author in candidate.metadata.authors:
+        author_text = (clean_title(author) or author).lower()
+        if author_text and title.endswith(f" - {author_text}"):
+            title = title[: -(len(author_text) + 3)].strip()
     return title

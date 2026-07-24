@@ -62,6 +62,8 @@ def _print_table(candidates) -> None:
         print(f"    authors: {authors}")
         print(f"    publisher/date: {meta.publisher or '-'} / {meta.published_date or '-'}")
         print(f"    isbn: {ids}")
+        if meta.series:
+            print(f"    series: {meta.series} #{meta.series_index:g}")
         print(f"    tags: {'、'.join(meta.tags) if meta.tags else '-'}")
         if meta.awards:
             awards = "、".join(f"{a.get('name')}:{a.get('status')}" for a in meta.awards)

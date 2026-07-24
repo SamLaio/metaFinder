@@ -30,6 +30,34 @@ def test_loose_single_token_match_is_not_relevant_for_title_author_query():
     assert not _candidate_matches_query(loose, query)
 
 
+def test_author_only_match_is_not_relevant_for_title_author_query():
+    query = "不及格男佣 黑潔明"
+    same_author_other_book = candidate("幸運女郎上錯床～City Hunter NO.2（2022電子版）", ["黑潔明"], 66)
+
+    assert not _candidate_matches_query(same_author_other_book, query)
+
+
+def test_title_author_suffix_does_not_make_wrong_same_author_book_relevant():
+    query = "盲眼刺客（下） 瑪格麗特．愛特伍"
+    same_author_other_book = candidate("使女的故事 - 瑪格麗特．愛特伍", ["瑪格麗特．愛特伍"], 73)
+
+    assert not _candidate_matches_query(same_author_other_book, query)
+
+
+def test_short_title_wrong_same_author_book_is_not_relevant():
+    query = "紅王子 提摩希．史奈德"
+    same_author_other_book = candidate("血色大地：夾在希特勒與史達林之間的東歐 - 提摩希．史奈德", ["提摩希．史奈德"], 81)
+
+    assert not _candidate_matches_query(same_author_other_book, query)
+
+
+def test_author_match_with_title_token_is_relevant_for_title_author_query():
+    query = "魔影魅靈5荼蘼香 黑潔明"
+    same_author_matching_book = candidate("荼蘼香（上）～魔影魅靈之五", ["黑潔明"], 66)
+
+    assert _candidate_matches_query(same_author_matching_book, query)
+
+
 def test_jjwxc_wrapped_title_matches_core_title_and_author():
     query = "新時代，新魔法 衝鴨小程程"
     wrapped = candidate("《新時代，新魔法》衝鴨小程程_晉江文學城_【原創小說|言情小說】", ["衝鴨小程程"], 37)

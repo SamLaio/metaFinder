@@ -14,6 +14,8 @@ class BookMetadata:
     published_date: str | None = None
     isbn: str | None = None
     eisbn: str | None = None
+    series: str | None = None
+    series_index: float | None = None
     language: str | None = None
     description: str | None = None
     tags: list[str] = field(default_factory=list)
@@ -46,6 +48,8 @@ class BookMetadata:
             "published_date": self.published_date,
             "isbn": self.isbn,
             "eisbn": self.eisbn,
+            "series": self.series,
+            "series_index": self.series_index,
             "language": self.language,
             "description": self.description,
             "tags": self.tags,
