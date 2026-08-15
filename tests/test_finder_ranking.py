@@ -1,4 +1,4 @@
-from metafinder.finder import MetadataFinder, _candidate_matches_query, _candidate_query_rank, _is_probably_book_page, _query_variants, _web_queries
+from metafinder.finder import MetadataFinder, _candidate_matches_query, _candidate_query_rank, _is_probably_book_page, _query_variants, _site_query_variants, _web_queries
 from metafinder.models import BookCandidate, BookMetadata
 from metafinder.sources.site_search import _matches_book_url, _strip_tracking, search_source_candidates
 
@@ -164,6 +164,21 @@ def test_query_variants_strip_leading_series_volume_prefix():
     assert "86-不存在的戰區 第一集 安里アサト" in variants
     assert "86-不存在的戰區 vol.1 安里アサト" in variants
     assert "86-不存在的戰區（1） 安里アサト" in variants
+
+
+def test_query_variants_try_chinese_first_bilingual_titles():
+    variants = _query_variants("01 OUTBREAK COMPANY 萌萌侵略者 榊一郎")
+
+    assert "萌萌侵略者 OUTBREAK COMPANY 榊一郎" in variants
+    assert "萌萌侵略者OUTBREAK COMPANY(01) 榊一郎" in variants
+
+
+def test_site_query_variants_prioritize_bilingual_volume_variants():
+    query = "01 OUTBREAK COMPANY 萌萌侵略者 榊一郎"
+    variants = _site_query_variants(query, _query_variants(query), 8)
+
+    assert "萌萌侵略者 OUTBREAK COMPANY 榊一郎" in variants
+    assert "萌萌侵略者OUTBREAK COMPANY(01) 榊一郎" in variants
 
 
 def test_query_variants_strip_bracketed_and_ordinal_volume_prefixes():

@@ -128,11 +128,12 @@ class MetadataFinder:
 def _query_variants(query: str) -> list[str]:
     variants = []
     for value in [query, *_volume_query_variants(query)]:
-        if value and value not in variants:
-            variants.append(value)
-        simplified = to_simplified_for_search(value or "")
-        if simplified and simplified not in variants:
-            variants.append(simplified)
+        for candidate in [value, *_bilingual_title_order_variants(value)]:
+            if candidate and candidate not in variants:
+                variants.append(candidate)
+            simplified = to_simplified_for_search(candidate or "")
+            if simplified and simplified not in variants:
+                variants.append(simplified)
     return variants
 
 
@@ -140,8 +141,8 @@ def _site_query_variants(query: str, query_variants: list[str], limit: int) -> l
     if not _leading_query_volume(query):
         return query_variants[:limit]
     variants: list[str] = []
-    for value in _volume_query_variants(query):
-        for candidate in [value, to_simplified_for_search(value or "")]:
+    for value in [*_volume_query_variants(query), query]:
+        for candidate in [value, *_bilingual_title_order_variants(value), to_simplified_for_search(value or "")]:
             if candidate and candidate not in variants:
                 variants.append(candidate)
     for candidate in [query, *query_variants]:
@@ -167,6 +168,67 @@ def _volume_query_variants(query: str) -> list[str]:
             sep = "" if marker.startswith(("(", "（")) else " "
             values.append(f"{stripped}{sep}{marker}")
     return values
+
+
+def _bilingual_title_order_variants(query: str | None) -> list[str]:
+    """Try Chinese-title-first variants for bilingual titles imported in reverse order."""
+
+    value = re.sub(r"\s+", " ", (query or "").replace("　", " ")).strip()
+    if not value:
+        return []
+    tokens = value.split(" ")
+    first_han = next((index for index, token in enumerate(tokens) if re.search(r"[\u4e00-\u9fff]", token)), None)
+    if not first_han or first_han <= 0:
+        return []
+    latin = " ".join(tokens[:first_han]).strip()
+    rest = tokens[first_han:]
+    if not latin or not rest or not re.search(r"[A-Za-z]", latin):
+        return []
+
+    author = ""
+    if len(rest) >= 2 and _looks_like_short_cjk_name(rest[-1]):
+        author = rest.pop()
+
+    marker = ""
+    if len(rest) >= 2 and _looks_like_volume_marker(rest[-1]):
+        marker = rest.pop()
+    title = " ".join(rest).strip()
+    if not title:
+        return []
+
+    variants: list[str] = []
+
+    def add(text: str) -> None:
+        text = re.sub(r"\s+", " ", text).strip()
+        if text and text != value and text not in variants:
+            variants.append(text)
+
+    suffix = f" {author}" if author else ""
+    if marker:
+        number = _volume_number(marker)
+        if number:
+            for formatted in [f"{number:02d}", str(number)]:
+                add(f"{title} {latin}({formatted}){suffix}")
+                add(f"{title}{latin}({formatted}){suffix}")
+                add(f"{title} {latin}（{formatted}）{suffix}")
+                add(f"{title}{latin}（{formatted}）{suffix}")
+        add(f"{title} {latin} {marker}{suffix}")
+        add(f"{title}{latin} {marker}{suffix}")
+    else:
+        add(f"{title} {latin}{suffix}")
+        add(f"{title}{latin}{suffix}")
+    return variants
+
+
+def _looks_like_short_cjk_name(value: str) -> bool:
+    return bool(re.fullmatch(r"[\u3040-\u30ff\u3400-\u9fff々〆ヵヶA-Za-z·．・]{2,8}", value or ""))
+
+
+def _looks_like_volume_marker(value: str) -> bool:
+    text = (value or "").strip()
+    if _volume_number(text):
+        return True
+    return bool(re.fullmatch(r"(?:第\s*)?[0-9０-９一二兩三四五六七八九十百]{1,4}\s*(?:集|卷|冊|部)", text))
 
 
 def _strip_leading_volume_prefix(query: str) -> tuple[str | None, int | None]:
