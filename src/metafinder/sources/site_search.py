@@ -29,7 +29,7 @@ SITE_SEARCHES = [
 BOOK_URL_PATTERNS = [re.compile(pattern) for pattern in BOOK_URL_PATTERN_TEXTS]
 
 
-def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0) -> list[str]:
+def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0, stop_after_first_hit: bool = False) -> list[str]:
     urls: list[str] = []
     for template in SITE_SEARCHES:
         search_url = template.url_template.format(query=quote_plus(query))
@@ -46,6 +46,8 @@ def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0) -> l
                 urls.append(href)
             if len(urls) >= limit:
                 return urls
+        if stop_after_first_hit and urls:
+            return urls
     return urls
 
 
@@ -59,7 +61,7 @@ def search_source_candidates(query: str, limit: int = 3, timeout: float = 15.0, 
         return candidates
     soup = BeautifulSoup(response.text, "lxml")
     count = _books_result_count(soup)
-    if count != 1:
+    if count != 1 and not expected_isbn:
         return candidates
     for item in soup.select("[id^='prod-itemlist-']"):
         title_link = item.select_one("h4 a[title]")

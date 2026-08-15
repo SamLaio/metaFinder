@@ -102,7 +102,7 @@ def test_jjwxc_wrapped_title_matches_core_title_and_author():
 def test_collect_urls_searches_with_jjwxc_query_hints(monkeypatch):
     queries: list[str] = []
 
-    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda query, limit, timeout: [])
+    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda query, limit, timeout, stop_after_first_hit=False: [])
 
     def fake_search_web(query: str, limit: int, timeout: float):
         queries.append(query)
@@ -119,7 +119,7 @@ def test_collect_urls_searches_with_jjwxc_query_hints(monkeypatch):
 def test_collect_urls_searches_with_fanqie_query_hints(monkeypatch):
     queries: list[str] = []
 
-    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda query, limit, timeout: [])
+    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda query, limit, timeout, stop_after_first_hit=False: [])
 
     def fake_search_web(query: str, limit: int, timeout: float):
         queries.append(query)
@@ -138,7 +138,7 @@ def test_collect_urls_searches_simplified_query_variant(monkeypatch):
     queries: list[str] = []
     site_queries: list[str] = []
 
-    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda query, limit, timeout: site_queries.append(query) or [])
+    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda query, limit, timeout, stop_after_first_hit=False: site_queries.append(query) or [])
 
     def fake_search_web(query: str, limit: int, timeout: float):
         queries.append(query)
@@ -199,11 +199,12 @@ def test_leading_volume_query_rejects_parenthesized_wrong_volume():
 
 
 def test_isbn_web_queries_are_bounded_and_skip_title_author_hints():
-    queries = _web_queries(["9789863842590"], expected_isbn="9789863842590", max_queries=6)
+    queries = _web_queries(["9789863842590"], expected_isbn="9789863842590", max_queries=7)
 
     assert queries == [
         "9789863842590",
         "9789863842590 site:books.com.tw",
+        "9789863842590 site:books.com.tw/products/E",
         "9789863842590 site:readmoo.com",
         "9789863842590 site:crown.com.tw",
         "9789863842590 site:cite.com.tw",
@@ -232,7 +233,7 @@ def test_isbn_search_returns_empty_when_no_candidate_matches_expected_isbn(monke
 def test_collect_urls_stops_when_deadline_is_expired(monkeypatch):
     calls: list[str] = []
 
-    def fake_source_search(query: str, limit: int, timeout: float):
+    def fake_source_search(query: str, limit: int, timeout: float, stop_after_first_hit: bool = False):
         calls.append(query)
         return ["https://readmoo.com/book/123"]
 
@@ -252,7 +253,7 @@ def test_collect_urls_stops_when_deadline_is_expired(monkeypatch):
 def test_collect_urls_caps_source_site_results_before_web_search(monkeypatch):
     site_calls: list[str] = []
 
-    def fake_source_search(query: str, limit: int, timeout: float):
+    def fake_source_search(query: str, limit: int, timeout: float, stop_after_first_hit: bool = False):
         site_calls.append(query)
         return [f"https://readmoo.com/book/{len(site_calls)}{i}" for i in range(10)]
 
@@ -268,7 +269,7 @@ def test_collect_urls_caps_source_site_results_before_web_search(monkeypatch):
 def test_collect_urls_limits_source_site_volume_variants_when_no_urls(monkeypatch):
     site_calls: list[str] = []
 
-    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda query, limit, timeout: site_calls.append(query) or [])
+    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda query, limit, timeout, stop_after_first_hit=False: site_calls.append(query) or [])
     monkeypatch.setattr("metafinder.finder.search_web", lambda query, limit, timeout: [])
 
     MetadataFinder(per_query_results=1)._collect_urls("01 86-不存在的戰區 安里アサト")
@@ -277,7 +278,7 @@ def test_collect_urls_limits_source_site_volume_variants_when_no_urls(monkeypatc
 
 
 def test_collect_urls_does_not_starve_explicit_volume_variant(monkeypatch):
-    def fake_source_search(query: str, limit: int, timeout: float):
+    def fake_source_search(query: str, limit: int, timeout: float, stop_after_first_hit: bool = False):
         if " 1 安里" in query:
             return ["https://readmoo.com/book/210092370000101"]
         return [f"https://readmoo.com/book/wrong{i}" for i in range(limit)]
@@ -350,6 +351,39 @@ def test_books_multiple_search_results_do_not_build_guess_candidate(monkeypatch)
     monkeypatch.setattr("metafinder.sources.site_search.requests.get", lambda url, headers, timeout: Response())
 
     assert search_source_candidates("01 86-不存在的戰區") == []
+
+
+def test_books_isbn_search_result_keeps_multiple_product_candidates(monkeypatch):
+    html = """
+    <div class="search_results"><p>搜尋結果共 <span>2</span> 筆</p></div>
+    <div id="prod-itemlist-E050030670">
+      <a href="//search.books.com.tw/redirect/move/key/x/area/mid_image/item/E050030670/page/1/idx/1/cat/E05/pdf/1/spell/3">
+        <img data-src="https://www.books.com.tw/img/E05/003/06/E050030670.jpg" />
+      </a>
+      <h4><a href="//search.books.com.tw/redirect/move/key/x/area/mid_name/item/E050030670/page/1/idx/1/cat/E05/pdf/1/spell/3" title="LV999的村民 (1) (電子書)">LV999的村民 (1) (電子書)</a></h4>
+      <p class="author"><a title="星月子貓">星月子貓</a></p>
+    </div>
+    <div id="prod-itemlist-0010783807">
+      <h4><a href="//search.books.com.tw/redirect/move/key/x/area/mid_name/item/0010783807/page/1/idx/2/cat/001/pdf/1/spell/3" title="LV999的村民 (1)">LV999的村民 (1)</a></h4>
+    </div>
+    """
+
+    class Response:
+        text = html
+        url = "https://search.books.com.tw/search/query/key/x/cat/all"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr("metafinder.sources.site_search.requests.get", lambda url, headers, timeout: Response())
+
+    candidates = search_source_candidates("9789575641801", expected_isbn="9789575641801", limit=5)
+
+    assert [candidate.source_url for candidate in candidates] == [
+        "https://www.books.com.tw/products/E050030670",
+        "https://www.books.com.tw/products/0010783807",
+    ]
+    assert all(candidate.metadata.isbn == "9789575641801" for candidate in candidates)
 
 
 def test_cite_book_urls_match_source_site_book_patterns():
