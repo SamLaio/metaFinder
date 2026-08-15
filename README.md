@@ -10,8 +10,13 @@ License: GNU General Public License v3.0
 - 優先找官方或主要書店/平台來源。
 - 解析書名、作者、譯者、出版社、出版日、ISBN/eISBN、簡介、標籤、封面 URL。
 - 從常見書名格式解析系列名稱與集數，例如 `～系列之三`、`PART9`、`NO.4`。
-- 使用專案內相依的 `opencc-python-reimplemented` 的 `OpenCC('s2tw')` 將簡體資料轉成臺灣正體。
+- 使用 `D:\github\zhTranslate` 共用轉換層將簡體資料轉成臺灣正體。
+- 針對晉江文學城等網路小說頁做站點補丁，清理 `《書名》作者_站名` 這類 SEO 標題並抽取頁面封面。
 - 保留多個候選來源與分數，不自動推測 Calibre 的來源欄位。
+
+## 參考來源
+
+- [chihchun/library-helper](https://github.com/chihchun/library-helper)：參考其站點規則集中管理、頁面抽取分層與搜尋出口設計；本專案不是執行時相依。
 
 ## 安裝
 
@@ -24,7 +29,7 @@ cd D:\project\metaFinder
 python -m pip install -e .
 ```
 
-這會同時安裝本專案與 `opencc-python-reimplemented`，是建議的使用方式。
+這會安裝本專案所需相依。簡轉正會優先引用 `D:\github\zhTranslate`；若尚未安裝 `zhTranslate`，程式會嘗試從 `D:\github\zhTranslate\src` 載入。
 
 ### 直接從原始碼執行
 
@@ -38,29 +43,34 @@ python -m metafinder.cli search "9786263151758"
 
 ### 匯入自訂詞
 
-如果你已經整理好 `原詞<TAB>翻譯` 的 txt 或 tsv，可以直接匯入到專案內的替換檔：
+如果你已經整理好 `原詞<TAB>翻譯` 的 txt 或 tsv，可以直接匯入到 `zhTranslate` 的共用替換檔：
 
 ```powershell
 metafinder-import-replacements D:\path\to\your_words.txt
 ```
 
-預設會更新 `[src/metafinder/custom_replacements.tsv](D:/project/metaFinder/src/metafinder/custom_replacements.tsv)`。
+預設會更新 `[D:\github\zhTranslate\src\s2tw_converter\custom_replacements.tsv](D:/github/zhTranslate/src/s2tw_converter/custom_replacements.tsv)`。
 你也可以一次丟多個檔案，後面的檔案會覆寫前面的同名詞條。
 
 ## 執行方式
 
 ### 以 ISBN 查詢
 
-ISBN 是最穩定的查詢方式。若候選中有 ISBN 精準命中，工具會只保留命中候選，避免混入無關搜尋結果。
+ISBN 是最穩定的查詢方式。若候選中有 ISBN 精準命中，工具會只保留命中候選；若沒有任何候選的 `isbn` 或 `eisbn` 精準命中，會回傳空候選，避免混入無關搜尋結果。
 
 ```powershell
 metafinder search "9786263151758"
 metafinder search "9786263151758" --json
 ```
 
+ISBN 查詢會優先用 ISBN 本身與主要書店/出版社/圖書館來源搜尋，包含博客來、Readmoo、皇冠文化、城邦讀書花園、誠品、Anobii、Google Books 與圖書館來源；不會再展開成大量書名/作者或網路小說提示查詢，避免外部搜尋引擎變慢時整批卡住。
+
 ### 以書名或作者查詢
 
 書名查詢會比較依賴搜尋結果品質。若沒有可靠候選，工具會回傳空結果，而不是硬塞看起來相似但不正確的資料。
+如果書名前面帶有 Calibre 系列整理用的集數前綴，搜尋時會保留原查詢並額外嘗試集數模糊變體，例如 `01 86-不存在的戰區 安里アサト` 會同時查 `86-不存在的戰區 安里アサト`、`86-不存在的戰區 1 安里アサト`、`86-不存在的戰區 第1集 安里アサト`、`86-不存在的戰區 vol.1 安里アサト` 等常見寫法。
+如果查詢含前置集數，候選排序與相關性檢查會比對候選標題或系列欄位中的集數；明顯不同集數會被排除，避免整理第 1 集時拿到第 7 集或第 9 集。
+前置集數查詢會優先嘗試顯式集數變體，並限制每個變體收集的 URL 數量，避免原始查詢先塞滿結果上限。
 
 ```powershell
 python -m metafinder.cli search "S級保鏢 多笑天"
@@ -73,6 +83,7 @@ python -m metafinder.cli search "迷宮飯 14" --limit 5
 
 ```powershell
 python -m metafinder.cli search "https://ixdzs8.com/read/236949/" --json
+python -m metafinder.cli search "https://www.jjwxc.net/onebook.php?novelid=7370132" --json
 ```
 
 ### 下載最佳候選封面
@@ -82,6 +93,25 @@ python -m metafinder.cli search "https://ixdzs8.com/read/236949/" --json
 ```powershell
 metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\cover.jpg
 ```
+
+### 搜尋逾時與效能
+
+預設搜尋有時間預算，避免外部搜尋或書店頁面卡住時拖慢 Calibre 整理流程：
+
+- 單一 HTTP 請求逾時：`3` 秒。
+- 整體候選收集與解析時間預算：`12` 秒。
+- 公開搜尋引擎 query 變體上限：`4` 組。
+- 若 DuckDuckGo 暫時逾時或拒絕連線，會繼續嘗試 Bing，不會直接讓該 query 整體失敗。
+- 站內搜尋會限制先收集的 URL 數量，也只使用最有價值的前幾個集數變體，避免把時間都花在收 URL，讓候選頁沒有時間解析。
+- ISBN 查詢會先嘗試 Open Library 輔助候選；這主要用於外文書 ISBN，在華文書店查不到時提供基本書名、作者、出版社與封面參考。
+
+可視情況調整：
+
+```powershell
+metafinder search "9789863842590" --json --request-timeout 2 --max-search-seconds 8 --max-web-queries 3
+```
+
+若仍查不到，工具會回傳空候選或 exit code `1`，整理流程應記錄 `No candidates found` 或具體逾時原因，再改用可信來源人工核對。
 
 ## 查找策略
 
@@ -97,13 +127,22 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 8. 其他候選頁
 
 工具會把搜尋結果解析成候選清單並打分。分數只協助排序，不代表一定正確；整理書庫時仍應檢查候選來源是否可靠。
+地區標籤用來描述作者或作品來源，不會從出版社名稱推導；例如臺灣代理出版的日本輕小說不會只因出版社是臺灣公司就標成 `臺灣`。
 當查詢同時包含完整書名與作者時，完整命中書名與作者的候選會優先於只命中部分泛詞的候選。
 當查詢同時包含書名與作者時，不能只因作者命中就接受候選；候選必須至少命中一個書名核心詞，避免同作者不同作品被誤收。
 部分來源會把頁面標題寫成 `書名 - 作者`；比對書名核心詞時會先移除尾端作者，避免作者詞被誤算成標題命中。
 如果多詞查詢只命中單一泛詞，工具會把它視為不可靠候選並排除；這時應記錄為 `No candidates found`，再由整理流程進行人工驗證。
+當查詢是正體中文時，搜尋階段會另外嘗試簡體中文查詢變體，避免晉江等以簡體標題建立索引的官方作品頁漏收。
+當查詢書名前面有明確集數前綴時，搜尋階段也會嘗試集數模糊變體，支援 `01 書名`、`第2集 書名`、`（03）書名` 等格式，並展開成 `書名 2`、`書名 第2集`、`書名 第二集`、`書名 vol.2`、`書名（2）` 等有限查詢；但不會把 `5.18光州` 這類日期或事件型書名誤切。
+候選相關性比對也會使用正體 / 簡體查詢變體，所以正體查詢可接受簡體官方頁的書名與作者，例如 `女神的煩惱 林綿綿` 可命中 `女神的烦恼 / 林绵绵`。
 針對晉江等網路小說頁常見的 `《書名》作者_站名` 標題格式，工具會抽取書名號中的核心書名輔助排序。
 對晉江作品會額外嘗試 `晉江文學城`、`晋江文学城` 與 `jjwxc` 查詢提示，並辨識 `onebook.php?novelid=`、`m.jjwxc.net/book2/`、`wap.jjwxc.net/book2/` 這類官方作品頁 URL。
 對番茄小說作品頁會辨識 `fanqienovel.com/page/<id>`，並從頁面可見欄位抽取書名、作者、類型標籤、最新更新時間與簡介。
+對疑似番茄小說作品，也會額外嘗試 `番茄小說`、`番茄小说` 與 `fanqienovel` 查詢提示，優先找官方作品頁而不是鏡像站。
+對 QQ 閱讀 `ubook.reader.qq.com/book-detail/` 與起點中文網 `qidian.com/book/` 會辨識為網文來源；若搜尋入口是動態或反爬頁，工具不會硬解析熱門推薦，以免誤收。
+對 Anobii 這類讀者目錄頁，只把它當輔助來源；若頁面回傳通用登入/歡迎標題，工具會從 URL 抽 ISBN，但不把通用頁標題寫成書名。
+博客來站內搜尋頁若回傳 `redirect/move/.../item/<產品編號>/...`，工具會轉成標準產品頁再解析。
+公開搜尋命中未知網域時，若頁面只有標題、沒有作者、出版社、ISBN 或封面等 metadata 證據，會被視為低證據候選並排除；動畫播放頁與 Wikipedia 不會自動當成書籍 metadata 候選，但使用者直接貼 URL 時仍可作為人工查證來源。
 
 ## 輸出欄位
 
@@ -132,6 +171,7 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 - 不會自動填 Calibre 的來源 custom column。
 - 作者名稱會盡量維持官方中文名；若頁面只有外文名，就保留來源拼法。
 - metadata 候選輸出的 `source_url` 只是查證來源，不等同 Calibre `來源` 欄位。
+- 標籤推論不會因書店頁面導覽或活動文案出現裸字 `BL` 就標為 `BL`；只有 `BL小說`、`BL漫畫`、`耽美` 或 `boy's love` 這類明確類型文字才會觸發。
 - 出版日輸出為頁面日期字串，寫入 Calibre DB 時仍需依書庫慣例轉 UTC。
 
 ## 注意事項
@@ -147,24 +187,34 @@ metafinder search "9786263151758" --download-cover D:\project\CalibreAbout\work\
 - `score` 只是排序輔助；高分候選仍可能是同名書或搜尋頁推薦項，使用前要人工確認。
 - 封面 URL 可能是低解析、站方占位圖或 R18 占位圖；換封面前要先看圖。
 - 有些站台會回 403、空搜尋頁或動態載入內容，這種情況工具會跳過該候選。
-- 簡轉繁使用 `opencc-python-reimplemented`，若套件不可用，工具會保留原文字。
+- 簡轉繁使用 `D:\github\zhTranslate`；如果共用轉換層不可用，metadata 正規化會保留原文字，避免查找流程中斷。
 - 標籤與獎項是輔助判斷，不會直接修改 Calibre；寫入前仍要檢查候選是否合理。
 
 ## 擴充詞庫
 
-目前這個專案採的是最小方案，直接依賴 `opencc-python-reimplemented`，不另外維護一份完整 OpenCC fork。
+簡轉正詞庫集中維護於 `D:\github\zhTranslate`，`metaFinder` 不再自行維護主要自訂詞表。
 
-如果未來只需要修少數專案特有詞彙，建議先在 `src/metafinder/normalize.py` 做一層很小的前後處理替換，成本最低，也最容易回退。
-對應的來源檔是 `[src/metafinder/custom_replacements.tsv](D:/project/metaFinder/src/metafinder/custom_replacements.tsv)`，直接補 `原詞<TAB>翻譯` 就行，或用 `metafinder-import-replacements` 匯入整理好的 txt。
-自訂替換會在 OpenCC 轉換前後各套用一次，所以簡體 key 與正體 key 都能命中。
+如果未來只需要修少數詞彙，請直接補到：
+
+```text
+D:\github\zhTranslate\src\s2tw_converter\custom_replacements.tsv
+```
+
+或使用：
+
+```powershell
+metafinder-import-replacements D:\path\to\your_words.txt
+```
+
+`zhTranslate` 會在 OpenCC 轉換前後各套用一次自訂替換，所以簡體 key 與正體 key 都能命中。
 
 如果真的需要擴充成一整套自訂詞庫，因為這個套件本身沒有提供自訂字典路徑參數，做法通常是：
 
-1. 把 `opencc` 原始碼與字典檔 fork 到本專案內。
+1. 把 `opencc` 原始碼與字典檔 fork 到 `D:\github\zhTranslate`。
 2. 在 fork 版本的 `config/*.json` 和 `dictionary/*.txt` 裡加入你的詞條。
-3. 讓本專案改用那份本地 `opencc` 實作，而不是外部套件。
+3. 讓 `zhTranslate` 改用那份本地 `opencc` 實作，而不是外部套件。
 
-也就是說，少量修正常用「專案內小型覆寫」，大量詞庫維護才考慮「vendor 一份本地 OpenCC」。
+也就是說，少量修正常用「`zhTranslate` 共用覆寫」，大量詞庫維護才考慮「vendor 一份本地 OpenCC」。
 
 ## 已知限制
 

@@ -21,6 +21,9 @@ def main(argv: list[str] | None = None) -> int:
     search.add_argument("--limit", type=int, default=8)
     search.add_argument("--json", action="store_true", help="print JSON instead of a compact table")
     search.add_argument("--download-cover", type=Path, help="download the best candidate cover to this path")
+    search.add_argument("--request-timeout", type=float, default=3.0, help="seconds to wait for each individual HTTP request")
+    search.add_argument("--max-search-seconds", type=float, default=12.0, help="overall time budget for collecting and parsing candidates")
+    search.add_argument("--max-web-queries", type=int, default=4, help="maximum public web-search query variants to try")
 
     args = parser.parse_args(argv)
     if args.command == "search":
@@ -38,7 +41,11 @@ def _prefer_utf8_stdio() -> None:
 
 
 def _search(args: argparse.Namespace) -> int:
-    finder = MetadataFinder()
+    finder = MetadataFinder(
+        request_timeout=args.request_timeout,
+        max_search_seconds=args.max_search_seconds,
+        max_web_queries=args.max_web_queries,
+    )
     candidates = finder.search(args.query, limit=args.limit)
     if args.json:
         print(json.dumps([c.as_dict() for c in candidates], ensure_ascii=False, indent=2))

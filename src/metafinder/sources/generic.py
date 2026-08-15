@@ -13,27 +13,10 @@ from bs4 import BeautifulSoup
 from metafinder.models import BookCandidate, BookMetadata
 from metafinder.normalize import clean_text, clean_title, normalize_isbn, short_tags, split_people
 from metafinder.series import infer_series_from_title
+from metafinder.source_rules import source_info as _source_info, source_rule_for_url
 from metafinder.sources.web_search import USER_AGENT
 from metafinder.tags import apply_awards_to_tags, awards_as_dict, infer_awards_from_trusted_record, infer_tags
 
-
-SOURCE_HINTS = {
-    "ching-win.com.tw": ("青文出版社", "publisher"),
-    "books.com.tw": ("博客來", "store"),
-    "readmoo.com": ("Readmoo", "store"),
-    "pubu.com.tw": ("Pubu", "store"),
-    "kobo.com": ("Kobo", "store"),
-    "bookwalker.com.tw": ("BOOKWALKER", "store"),
-    "eslite.com": ("誠品線上", "store"),
-    "shogakukan.co.jp": ("小學館", "publisher"),
-    "gagagabunko.jp": ("小學館 Gagaga", "publisher"),
-    "book.moc.gov.tw": ("文化部", "government"),
-    "ncl.edu.tw": ("國家圖書館", "government"),
-    "fanqienovel.com": ("番茄小說", "web-novel"),
-    "ttkan.co": ("天天看小說", "web-novel"),
-    "ixdzs.com": ("愛下電子書", "web-novel"),
-    "ixdzs8.com": ("愛下電子書", "web-novel"),
-}
 
 BASE_SOURCE_SCORE = {
     "publisher": 40,
@@ -70,11 +53,9 @@ class GenericPageParser:
         metadata = BookMetadata()
         evidence: list[str] = []
 
-        self._from_json_ld(soup, metadata, evidence)
-        self._from_meta_tags(soup, url, metadata, evidence)
-        self._from_fanqie_page(soup, url, metadata, evidence)
-        self._from_visible_labels(soup, metadata, evidence)
-        self._from_images(soup, url, metadata, evidence)
+        self._extract_common_metadata(soup, url, metadata, evidence)
+        self._apply_site_patch(soup, url, metadata, evidence)
+        self._extract_fallback_metadata(soup, url, metadata, evidence)
         self._cleanup(metadata)
 
         source_name, source_kind = source_info(url)
@@ -97,6 +78,22 @@ class GenericPageParser:
             score=score,
             evidence=evidence,
         )
+
+    def _extract_common_metadata(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        self._from_json_ld(soup, metadata, evidence)
+        self._from_meta_tags(soup, url, metadata, evidence)
+
+    def _apply_site_patch(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        rule = source_rule_for_url(url)
+        if not rule or not rule.patch:
+            return
+        patch = getattr(self, f"_patch_{rule.patch}", None)
+        if patch:
+            patch(soup, url, metadata, evidence)
+
+    def _extract_fallback_metadata(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        self._from_visible_labels(soup, metadata, evidence)
+        self._from_images(soup, url, metadata, evidence)
 
     def _from_json_ld(self, soup: BeautifulSoup, metadata: BookMetadata, evidence: list[str]) -> None:
         for script in soup.find_all("script", type=lambda t: t and "ld+json" in t):
@@ -181,7 +178,7 @@ class GenericPageParser:
         if found:
             evidence.append("visible-labels")
 
-    def _from_fanqie_page(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+    def _patch_fanqie(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         host = urlparse(url).netloc.lower()
         if not (host == "fanqienovel.com" or host.endswith(".fanqienovel.com")):
             return
@@ -220,6 +217,60 @@ class GenericPageParser:
 
         if found:
             evidence.append("fanqie-page")
+
+    def _patch_jjwxc(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        host = urlparse(url).netloc.lower()
+        if not (host == "jjwxc.net" or host.endswith(".jjwxc.net")):
+            return
+
+        found = False
+        page_title = soup.title.get_text(" ", strip=True) if soup.title else ""
+        match = re.search(r"《([^》]+)》\s*([^_《》]+)?_?(?:晋江文学城|晉江文學城)", page_title)
+        if match:
+            metadata.title = clean_title(match.group(1)) or metadata.title
+            author = clean_text(match.group(2))
+            if author and not metadata.authors:
+                metadata.authors = split_people(author)
+            found = True
+
+        text = soup.get_text("\n", strip=True)
+        if not metadata.authors:
+            author_match = re.search(r"作者\s*[:：]\s*([^\n\r]+)", text)
+            if author_match:
+                metadata.authors = split_people(author_match.group(1))
+                found = True
+        if not metadata.publisher:
+            metadata.publisher = "晉江文學城"
+            found = True
+
+        if not metadata.cover_url:
+            for img in soup.find_all("img"):
+                src = _image_src(img)
+                if src and "imgdb.cn" in src:
+                    metadata.cover_url = urljoin(url, src)
+                    found = True
+                    break
+
+        if found:
+            evidence.append("jjwxc-page")
+
+    def _patch_anobii(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        host = urlparse(url).netloc.lower()
+        if not (host == "anobii.com" or host.endswith(".anobii.com")):
+            return
+
+        found = False
+        match = re.search(r"/books/[^/]+/([0-9Xx-]{10,17})/", url)
+        if match and not metadata.isbn:
+            metadata.isbn = normalize_isbn(match.group(1))
+            found = True
+
+        if metadata.title and "anobii" in metadata.title.lower() and "passion" in metadata.title.lower():
+            metadata.title = None
+            found = True
+
+        if found:
+            evidence.append("anobii-url")
 
     def _from_images(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         if metadata.cover_url:
@@ -277,11 +328,7 @@ class GenericPageParser:
 
 
 def source_info(url: str) -> tuple[str, str]:
-    host = urlparse(url).netloc.lower()
-    for domain, info in SOURCE_HINTS.items():
-        if host == domain or host.endswith("." + domain):
-            return info
-    return host or "unknown", "other"
+    return _source_info(url)
 
 
 def _meta_content(soup: BeautifulSoup, names: list[str]) -> str | None:

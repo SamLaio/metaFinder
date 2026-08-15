@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
@@ -11,63 +12,70 @@ try:
 except Exception:
     OpenCC = None
 
-_converter = None
-CUSTOM_REPLACEMENTS_FILE = Path(__file__).with_name("custom_replacements.tsv")
+zhtranslate_src = Path(r"D:\github\zhTranslate\src")
+if zhtranslate_src.exists() and str(zhtranslate_src) not in sys.path:
+    sys.path.insert(0, str(zhtranslate_src))
 
+try:
+    from s2tw_converter import Converter as ZhTranslateConverter
+except Exception:
+    ZhTranslateConverter = None
 
-def _load_custom_replacements() -> tuple[tuple[str, str], ...]:
-    if not CUSTOM_REPLACEMENTS_FILE.exists():
-        return ()
-    replacements: dict[str, str] = {}
-    with CUSTOM_REPLACEMENTS_FILE.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "\t" not in line:
-                continue
-            source, target = line.split("\t", 1)
-            source = source.strip()
-            target = target.strip().split()[0] if target.strip() else ""
-            if not source or not target:
-                continue
-            replacements[source] = target
-    return tuple(sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True))
-
-
-CUSTOM_REPLACEMENTS: tuple[tuple[str, str], ...] = _load_custom_replacements()
+_traditional_converter = None
+_simplified_converter = None
 
 
 def _get_converter():
-    global _converter
-    if _converter is not None:
-        return _converter
-    if OpenCC is None:
-        _converter = False
-        return _converter
+    global _traditional_converter
+    if _traditional_converter is not None:
+        return _traditional_converter
+    if ZhTranslateConverter is None:
+        _traditional_converter = False
+        return _traditional_converter
     try:
-        _converter = OpenCC("s2tw")
+        _traditional_converter = ZhTranslateConverter()
     except Exception:
-        _converter = False
-    return _converter
+        _traditional_converter = False
+    return _traditional_converter
+
+
+def _get_simplified_converter():
+    global _simplified_converter
+    if _simplified_converter is not None:
+        return _simplified_converter
+    if OpenCC is None:
+        _simplified_converter = False
+        return _simplified_converter
+    try:
+        _simplified_converter = OpenCC("tw2s")
+    except Exception:
+        _simplified_converter = False
+    return _simplified_converter
 
 
 def to_traditional(text: str | None) -> str | None:
     if not text:
         return text
     converter = _get_converter()
-    converted = _apply_custom_replacements(text)
     if converter:
         try:
-            converted = converter.convert(converted)
+            return converter.convert(text)
         except Exception:
             pass
-    converted = _apply_custom_replacements(converted)
-    return converted
-
-
-def _apply_custom_replacements(text: str) -> str:
-    for old, new in CUSTOM_REPLACEMENTS:
-        text = text.replace(old, new)
     return text
+
+
+def to_simplified_for_search(text: str | None) -> str | None:
+    """Create a Simplified Chinese query variant for sources that index that way."""
+    if not text:
+        return text
+    converter = _get_simplified_converter()
+    if not converter:
+        return text
+    try:
+        return converter.convert(text)
+    except Exception:
+        return text
 
 
 def clean_text(text: str | None) -> str | None:

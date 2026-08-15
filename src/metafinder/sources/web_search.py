@@ -28,6 +28,23 @@ def _unwrap_duckduckgo_url(url: str) -> str:
     return url
 
 
+def _unwrap_bing_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.netloc.endswith("bing.com") and parsed.path.startswith("/ck/"):
+        qs = parse_qs(parsed.query)
+        if "u" in qs:
+            value = qs["u"][0]
+            if value.startswith("a1"):
+                try:
+                    import base64
+
+                    return base64.urlsafe_b64decode(value[2:] + "==").decode("utf-8")
+                except Exception:
+                    return url
+            return unquote(value)
+    return url
+
+
 def search_web(query: str, limit: int = 10, timeout: float = 15.0) -> list[SearchResult]:
     """Search the web through public HTML result pages.
 
@@ -35,9 +52,16 @@ def search_web(query: str, limit: int = 10, timeout: float = 15.0) -> list[Searc
     time, so callers should treat an empty result as a recoverable condition.
     """
 
-    results = _search_duckduckgo(query, limit=limit, timeout=timeout)
+    try:
+        results = _search_duckduckgo(query, limit=limit, timeout=timeout)
+    except Exception:
+        results = []
     if len(results) < limit:
-        for result in _search_bing(query, limit=limit, timeout=timeout):
+        try:
+            fallback_results = _search_bing(query, limit=limit, timeout=timeout)
+        except Exception:
+            fallback_results = []
+        for result in fallback_results:
             if result.url not in {r.url for r in results}:
                 results.append(result)
             if len(results) >= limit:
@@ -84,7 +108,7 @@ def _search_bing(query: str, limit: int, timeout: float) -> list[SearchResult]:
         snippet = item.select_one(".b_caption p")
         result = SearchResult(
             title=link.get_text(" ", strip=True),
-            url=link["href"],
+            url=_unwrap_bing_url(link["href"]),
             snippet=snippet.get_text(" ", strip=True) if snippet else None,
         )
         if result.url not in {r.url for r in results}:

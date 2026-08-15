@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from metafinder.import_replacements import load_replacements, write_replacements
+from metafinder.import_replacements import DEFAULT_REPLACEMENTS_FILE, load_replacements, write_replacements
+
+
+def test_default_replacements_file_points_to_zhtranslate():
+    assert DEFAULT_REPLACEMENTS_FILE == Path(r"D:\github\zhTranslate\src\s2tw_converter\custom_replacements.tsv")
 
 
 def test_load_replacements_merges_and_overrides(tmp_path: Path):

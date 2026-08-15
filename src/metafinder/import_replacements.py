@@ -4,20 +4,20 @@ import argparse
 from collections import OrderedDict
 from pathlib import Path
 
-from metafinder.normalize import CUSTOM_REPLACEMENTS_FILE
+DEFAULT_REPLACEMENTS_FILE = Path(r"D:\github\zhTranslate\src\s2tw_converter\custom_replacements.tsv")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="metafinder-import-replacements",
-        description="Import tab-separated custom replacements into the bundled TSV file.",
+        description="Import tab-separated custom replacements into zhTranslate's shared TSV file.",
     )
     parser.add_argument("inputs", nargs="+", type=Path, help="one or more prepared txt/tsv files")
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=CUSTOM_REPLACEMENTS_FILE,
+        default=DEFAULT_REPLACEMENTS_FILE,
         help="destination TSV file",
     )
     args = parser.parse_args(argv)

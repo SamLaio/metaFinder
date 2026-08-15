@@ -64,8 +64,8 @@ GENRE_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
     ("冒險", ("冒險", "adventure")),
     ("異能", ("異能", "超能力", "特殊能力")),
     ("言情", ("言情", "愛情小說", "romance")),
-    ("BL", ("BL", "耽美", "boy's love", "boys love")),
-    ("百合", ("百合", "GL", "girls love")),
+    ("BL", ("BL小說", "BL漫畫", "耽美", "boy's love", "boys love")),
+    ("百合", ("百合", "GL小說", "GL漫畫", "girls love")),
     ("歷史", ("歷史", "史實", "historical")),
     ("戰記", ("戰記", "戰爭", "war story")),
     ("軍事", ("軍事", "military")),
@@ -175,7 +175,9 @@ def infer_tags(metadata: BookMetadata, extra_text: str | None = None) -> TagInfe
             extra_text,
         ]
     )
-    region_text = _join_text([metadata.publisher, *(metadata.tags or [])])
+    # Region tags should describe the author/work origin, not the storefront or
+    # local publisher.  Taiwanese publishers often license Japanese/Korean works.
+    region_text = _join_text(metadata.tags or [])
     tags = _dedupe(short_tags(metadata.tags))
 
     for tag, needles in REGION_PATTERNS:

@@ -33,6 +33,7 @@ def test_clean_text_decodes_html_entities():
 def test_custom_replacements_apply_after_opencc():
     assert clean_text("一出") == "一齣"
     assert clean_text("实时") == "即時"
+    assert clean_text("信息") == "資訊"
 
 
 def test_volume_title_from_trailing_number():
@@ -69,6 +70,19 @@ def test_region_tags_do_not_come_from_description_places():
     assert "小說" in result.tags
 
 
+def test_region_tags_do_not_come_from_local_publisher():
+    meta = BookMetadata(
+        title="LV999的村民",
+        publisher="臺灣角川",
+        description="日本輕小說譯本，職業雖弱卻強到極致的小村民展開冒險。",
+    )
+    result = infer_tags(meta)
+    assert "臺灣" not in result.tags
+    assert "日本" not in result.tags
+    assert "輕小說" in result.tags
+    assert "冒險" in result.tags
+
+
 def test_detect_international_award_winner():
     awards = detect_awards("本書榮獲 International Booker Prize，並入圍多項年度選書。")
     assert awards
@@ -88,6 +102,16 @@ def test_award_words_in_store_text_do_not_become_tags():
     assert "雨果獎" not in result.tags
     assert "國際大獎" not in result.tags
     assert "得獎作品" not in result.tags
+
+
+def test_bare_bl_from_store_chrome_does_not_become_tag():
+    meta = BookMetadata(
+        title="金牌得主",
+        description="出版社：東立出版社。花式滑冰漫畫。頁面導覽包含 BL 大哉問。",
+    )
+    result = infer_tags(meta)
+    assert "漫畫" in result.tags
+    assert "BL" not in result.tags
 
 
 def test_awards_require_current_source_to_be_trusted_record():
