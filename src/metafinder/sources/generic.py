@@ -11,7 +11,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from metafinder.models import BookCandidate, BookMetadata
-from metafinder.normalize import clean_text, clean_title, normalize_isbn, short_tags, split_people
+from metafinder.normalize import clean_text, clean_title, normalize_isbn, normalize_publisher, short_tags, split_people
 from metafinder.series import infer_series_from_title
 from metafinder.source_rules import source_info as _source_info, source_rule_for_url
 from metafinder.sources.web_search import USER_AGENT
@@ -294,7 +294,7 @@ class GenericPageParser:
         metadata.subtitle = clean_text(metadata.subtitle)
         metadata.authors = split_people(metadata.authors)
         metadata.translators = split_people(metadata.translators)
-        metadata.publisher = clean_text(metadata.publisher)
+        metadata.publisher = normalize_publisher(metadata.publisher)
         metadata.published_date = clean_text(metadata.published_date)
         metadata.isbn = normalize_isbn(metadata.isbn)
         metadata.eisbn = normalize_isbn(metadata.eisbn)

@@ -213,6 +213,15 @@ def test_leading_volume_query_rejects_parenthesized_wrong_volume():
     assert not _candidate_matches_query(volume_9, query)
 
 
+def test_query_with_volume_before_author_rejects_wrong_volume():
+    query = "Fairy Tale 幻想編年史 11 埴輪星人"
+    volume_8 = candidate("Fairy Tale 幻想編年史～不懂察言觀色的異世界生活～ 8", ["埴輪星人"], 80)
+    volume_11 = candidate("Fairy Tale 幻想編年史～不懂察言觀色的異世界生活～ 11", ["埴輪星人"], 80)
+
+    assert not _candidate_matches_query(volume_8, query)
+    assert _candidate_matches_query(volume_11, query)
+
+
 def test_isbn_web_queries_are_bounded_and_skip_title_author_hints():
     queries = _web_queries(["9789863842590"], expected_isbn="9789863842590", max_queries=7)
 

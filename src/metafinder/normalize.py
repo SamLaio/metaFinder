@@ -96,6 +96,20 @@ def clean_title(text: str | None) -> str | None:
     return clean_text(text)
 
 
+PUBLISHER_ALIASES = {
+    "聯經出版公司": "聯經出版",
+    "東立出版社": "東立出版",
+    "東立": "東立出版",
+}
+
+
+def normalize_publisher(text: str | None) -> str | None:
+    text = clean_text(text)
+    if not text:
+        return None
+    return PUBLISHER_ALIASES.get(text, text)
+
+
 def split_people(value: str | Iterable[str] | None) -> list[str]:
     if value is None:
         return []

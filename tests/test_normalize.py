@@ -1,6 +1,7 @@
 from metafinder.normalize import (
     clean_text,
     normalize_isbn,
+    normalize_publisher,
     short_tags,
     split_people,
     volume_title_from_trailing_number,
@@ -34,6 +35,12 @@ def test_custom_replacements_apply_after_opencc():
     assert clean_text("一出") == "一齣"
     assert clean_text("实时") == "即時"
     assert clean_text("信息") == "資訊"
+
+
+def test_normalize_publisher_aliases_match_calibre_db():
+    assert normalize_publisher("聯經出版公司") == "聯經出版"
+    assert normalize_publisher("東立出版社") == "東立出版"
+    assert normalize_publisher("東立") == "東立出版"
 
 
 def test_volume_title_from_trailing_number():

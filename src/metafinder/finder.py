@@ -340,7 +340,7 @@ def _is_low_evidence_other_page(candidate: BookCandidate) -> bool:
 
 
 def _candidate_matches_query(candidate: BookCandidate, query: str) -> bool:
-    query_volume = _leading_query_volume(query)
+    query_volume = _query_volume(query)
     candidate_volume = _candidate_volume(candidate)
     if query_volume and candidate_volume and query_volume != candidate_volume:
         return False
@@ -405,7 +405,7 @@ def _candidate_query_rank(candidate: BookCandidate, query: str) -> int:
         return 0
 
     rank = 0
-    query_volume = _leading_query_volume(query)
+    query_volume = _query_volume(query)
     candidate_volume = _candidate_volume(candidate)
     if query_volume and candidate_volume:
         rank += 25 if query_volume == candidate_volume else -80
@@ -434,6 +434,25 @@ def _leading_query_volume(query: str) -> int | None:
     return volume
 
 
+def _query_volume(query: str) -> int | None:
+    leading = _leading_query_volume(query)
+    if leading:
+        return leading
+    value = re.sub(r"\s+", " ", query.replace("　", " ")).strip()
+    if not value:
+        return None
+    tokens = value.split(" ")
+    for index in [len(tokens) - 1, len(tokens) - 2]:
+        if index < 0:
+            continue
+        if index == len(tokens) - 2 and not _looks_like_short_cjk_name(tokens[-1]):
+            continue
+        if not re.fullmatch(r"[0-9０-９]{1,3}|[一二兩三四五六七八九十百]{1,4}", tokens[index]):
+            continue
+        return _volume_number(tokens[index])
+    return None
+
+
 def _candidate_volume(candidate: BookCandidate) -> int | None:
     if candidate.metadata.series_index and float(candidate.metadata.series_index).is_integer():
         return int(candidate.metadata.series_index)
@@ -449,6 +468,7 @@ def _title_volume(title: str) -> int | None:
         r"(?:第\s*)?([0-9０-９]{1,3}|[一二兩三四五六七八九十百]+)\s*(?:集|卷|冊|部)",
         r"(?:vol\.?|volume|no\.?)\s*([0-9０-９]{1,3})",
         r"[（(]\s*([0-9０-９]{1,3}|[一二兩三四五六七八九十百]+)\s*[）)]",
+        r"(?:^|\s)([0-9０-９]{1,3}|[一二兩三四五六七八九十百]+)\s*$",
     ]:
         match = re.search(pattern, title, flags=re.I)
         if match:
