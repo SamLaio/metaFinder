@@ -1,5 +1,6 @@
 from metafinder.finder import MetadataFinder, _candidate_matches_query, _candidate_query_rank, _is_probably_book_page, _query_variants, _site_query_variants, _web_queries
 from metafinder.models import BookCandidate, BookMetadata
+from metafinder.sources.generic import GenericPageParser
 from metafinder.sources.site_search import _matches_book_url, _strip_tracking, search_source_candidates
 
 
@@ -20,6 +21,62 @@ def test_default_search_budget_is_safe_for_batch_use():
     assert finder.max_search_seconds == 12.0
     assert finder.max_search_seconds < 20
     assert finder.max_web_queries == 4
+
+
+def test_store_search_result_is_hydrated_with_product_page_metadata(monkeypatch):
+    summary = BookCandidate(
+        source_name="博客來",
+        source_url="https://www.books.com.tw/products/0010767953",
+        source_kind="store",
+        metadata=BookMetadata(title="世界史聞不出的藥水味", authors=["譚健鍬"]),
+        score=42,
+        evidence=["books-search-result"],
+    )
+    detail = BookCandidate(
+        source_name="博客來",
+        source_url=summary.source_url,
+        source_kind="store",
+        metadata=BookMetadata(
+            title="世界史聞不出的藥水味：那些外國名人的生老病死",
+            authors=["譚健鍬"],
+            publisher="時報出版",
+            isbn="9789571371801",
+            tags=["人文社科"],
+        ),
+        score=70,
+        evidence=["json-ld", "meta-tags"],
+    )
+    finder = MetadataFinder(max_search_seconds=3)
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [summary])
+    monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: [])
+    monkeypatch.setattr(finder.parser, "parse_url", lambda *args, **kwargs: detail)
+
+    result = finder.search("世界史聞不出的藥水味 譚健鍬")
+
+    assert result == [detail]
+    assert result[0].metadata.tags == ["人文社科"]
+
+
+def test_same_product_url_from_store_and_web_search_is_returned_once(monkeypatch):
+    detail = BookCandidate(
+        source_name="博客來",
+        source_url="https://www.books.com.tw/products/0010767953",
+        source_kind="store",
+        metadata=BookMetadata(
+            title="世界史聞不出的藥水味：那些外國名人的生老病死",
+            authors=["譚健鍬"],
+            isbn="9789571371801",
+            tags=["人文社科"],
+        ),
+        score=70,
+        evidence=["json-ld", "meta-tags"],
+    )
+    finder = MetadataFinder(max_search_seconds=3)
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [detail])
+    monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: [detail.source_url])
+    monkeypatch.setattr(finder.parser, "parse_url", lambda *args, **kwargs: detail)
+
+    assert finder.search("世界史聞不出的藥水味 譚健鍬") == [detail]
 
 
 def test_exact_title_and_author_match_ranks_above_loose_title_token_match():
@@ -116,6 +173,12 @@ def test_collect_urls_searches_with_jjwxc_query_hints(monkeypatch):
     assert "新時代，新魔法 衝鴨小程程 jjwxc" in queries
 
 
+def test_limited_web_search_prioritizes_store_sources_before_web_novel_hints():
+    queries = _web_queries(["遠野物語 柳田國男"], max_queries=2)
+
+    assert queries == ["遠野物語 柳田國男", "遠野物語 柳田國男 site:books.com.tw"]
+
+
 def test_collect_urls_searches_with_fanqie_query_hints(monkeypatch):
     queries: list[str] = []
 
@@ -164,6 +227,27 @@ def test_query_variants_strip_leading_series_volume_prefix():
     assert "86-不存在的戰區 第一集 安里アサト" in variants
     assert "86-不存在的戰區 vol.1 安里アサト" in variants
     assert "86-不存在的戰區（1） 安里アサト" in variants
+
+
+def test_query_variants_include_taiwan_traditional_terms():
+    variants = _query_variants("01 在地下城尋求邂逅是否搞錯了什麽 大森藤ノ")
+
+    assert any("什麼" in variant for variant in variants)
+
+
+def test_query_variants_include_common_title_glyph_variants():
+    variants = _query_variants("01 帶著外掛轉生為公會櫃檯小姐 夏にコタツ")
+
+    assert "帶著外掛轉生為公會櫃臺小姐 夏にコタツ" in variants
+    assert "帶著外掛轉生為公會櫃台小姐 夏にコタツ" in variants
+
+
+def test_candidate_matching_accepts_common_title_glyph_variants():
+    query = "01 帶著外掛轉生為公會櫃檯小姐 夏にコタツ"
+    official = candidate("帶著外掛轉生為公會櫃臺小姐(1) - 夏にコタツ", ["夏にコタツ"], 69)
+
+    assert _candidate_matches_query(official, query)
+    assert _candidate_query_rank(official, query) > 0
 
 
 def test_query_variants_try_chinese_first_bilingual_titles():
@@ -410,8 +494,127 @@ def test_books_isbn_search_result_keeps_multiple_product_candidates(monkeypatch)
     assert all(candidate.metadata.isbn == "9789575641801" for candidate in candidates)
 
 
+def test_tdtb_site_search_strips_leading_volume_prefix(monkeypatch):
+    calls: list[str] = []
+
+    class Response:
+        url = "https://tdtb.org/library"
+
+        def __init__(self, text: str):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url: str, headers, timeout: float):
+        calls.append(url)
+        if "Title=%E6%BD%9B%E8%89%87%E8%BF%B7%E5%AE%AE" in url:
+            return Response('<a href="/library/3248">潛艇迷宮</a>')
+        return Response("")
+
+    monkeypatch.setattr("metafinder.sources.site_search.requests.get", fake_get)
+
+    assert search_source_candidates("29潛艇迷宮 倪匡") == []
+    urls = __import__("metafinder.sources.site_search", fromlist=["search_source_sites"]).search_source_sites("29潛艇迷宮 倪匡")
+
+    assert "https://tdtb.org/library/3248" in urls
+    assert any("Author=%E5%80%AA%E5%8C%A1" in call for call in calls)
+
+
 def test_cite_book_urls_match_source_site_book_patterns():
     assert _matches_book_url("https://www.cite.com.tw/book?id=SPB7Z000301")
+
+
+def test_sanmin_product_page_patch_extracts_visible_book_fields():
+    html = """
+    <html><body>
+      <h1>如何有效閱讀一本書：超實用筆記讀書法（簡體書）</h1>
+      <section>
+        ISBN13：9787210082972
+        出版社：江西人民出版社
+        作者：(日)奧野宣之
+        譯者：張晶晶
+        出版日：2024-01-10
+      </section>
+      <h3>內容簡介</h3>
+      <p>本書介紹以筆記整理閱讀過程，讓讀者把讀過的內容轉化為可重新使用的知識。</p>
+    </body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://www.sanmin.com.tw/product/index/005749190", html)
+
+    assert candidate.source_name == "三民網路書店"
+    assert candidate.metadata.isbn == "9787210082972"
+    assert candidate.metadata.publisher == "江西人民出版社"
+    assert candidate.metadata.authors == ["(日)奧野宣之"]
+    assert candidate.metadata.translators == ["張晶晶"]
+    assert candidate.metadata.published_date == "2024-01-10"
+    assert "sanmin-page" in candidate.evidence
+
+
+def test_direct_product_url_does_not_treat_url_number_as_expected_isbn(monkeypatch):
+    detail = BookCandidate(
+        source_name="三民網路書店",
+        source_url="https://www.sanmin.com.tw/product/index/005749190",
+        source_kind="store",
+        metadata=BookMetadata(title="如何有效閱讀一本書：超實用筆記讀書法", isbn="9787210082972"),
+        score=67,
+        evidence=["sanmin-page"],
+    )
+    finder = MetadataFinder(max_search_seconds=3)
+    monkeypatch.setattr(finder.parser, "parse_url", lambda *args, **kwargs: detail)
+
+    result = finder.search("https://www.sanmin.com.tw/product/index/005749190")
+
+    assert result == [detail]
+
+
+def test_tdtb_library_page_patch_extracts_publisher_year_and_description():
+    html = """
+    <html><body>
+      <h1>潛艇迷宮</h1>
+      <main>
+        作者 倪匡
+        出版單位 金蘭文化出版社
+        出版年份 1986
+        格式類型 文字
+        書籍類型 語文類
+        雲四風和幾個著名的遊艇製造廠工程師共同設計及製造了一艘遊艇，命名為兄弟姐妹號。
+      </main>
+    </body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://tdtb.org/library/3248", html)
+
+    assert candidate.source_name == "本館館藏"
+    assert candidate.metadata.publisher == "金蘭文化出版社"
+    assert candidate.metadata.published_date == "1986"
+    assert candidate.metadata.title == "潛艇迷宮"
+    assert candidate.metadata.description.startswith("雲四風")
+    assert "tdtb-library-page" in candidate.evidence
+
+
+def test_tdtb_library_page_does_not_use_next_label_as_blank_publisher():
+    html = """
+    <html><body>
+      <main>
+        <h2>北極氫彈戰</h2>
+        作者
+        倪匡
+        出版單位
+        出版年份
+        格式類型
+        文字
+        《北極氫彈戰》為完結版，作者倪匡。
+      </main>
+    </body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://tdtb.org/library/3102", html)
+
+    assert candidate.metadata.publisher is None
+    assert candidate.metadata.published_date is None
+    assert candidate.metadata.title == "北極氫彈戰"
 
 
 def test_qq_reader_and_qidian_book_urls_match_source_site_book_patterns():

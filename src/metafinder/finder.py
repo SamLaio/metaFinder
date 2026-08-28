@@ -6,7 +6,7 @@ import time
 from urllib.parse import urlparse
 
 from metafinder.models import BookCandidate
-from metafinder.normalize import clean_title, normalize_isbn, to_simplified_for_search
+from metafinder.normalize import clean_title, normalize_isbn, to_simplified_for_search, to_traditional
 from metafinder.sources import GenericPageParser, search_web
 from metafinder.sources.openlibrary import lookup_openlibrary_isbn
 from metafinder.sources.site_search import search_source_candidates, search_source_sites
@@ -18,6 +18,10 @@ DEFAULT_SOURCE_QUERIES = [
     "site:pubu.com.tw",
     "site:kobo.com",
     "site:bookwalker.com.tw",
+    "site:sanmin.com.tw",
+    "site:tdtb.org/library",
+    "site:cite.com.tw",
+    "site:kingstone.com.tw",
     "site:jjwxc.net",
     "site:m.jjwxc.net",
     "site:qidian.com",
@@ -47,8 +51,8 @@ class MetadataFinder:
     max_web_queries: int = 4
 
     def search(self, query: str, limit: int = 8) -> list[BookCandidate]:
-        expected_isbn = normalize_isbn(query)
         direct_url = _looks_like_url(query)
+        expected_isbn = None if direct_url else normalize_isbn(query)
         deadline = time.monotonic() + self.max_search_seconds if self.max_search_seconds > 0 else None
         candidates: list[BookCandidate] = []
         if expected_isbn:
@@ -56,7 +60,13 @@ class MetadataFinder:
             if openlibrary:
                 candidates.append(openlibrary)
         if not direct_url:
-            candidates.extend(search_source_candidates(query, limit=3, timeout=min(_request_timeout(self.request_timeout, deadline), 2.0), expected_isbn=expected_isbn))
+            source_candidates = search_source_candidates(
+                query,
+                limit=3,
+                timeout=min(_request_timeout(self.request_timeout, deadline), 2.0),
+                expected_isbn=expected_isbn,
+            )
+            candidates.extend(self._hydrate_source_candidate(source_candidates, query, expected_isbn, deadline))
         urls = self._collect_urls(query, expected_isbn=expected_isbn, deadline=deadline)
         seen: set[str] = set()
         parser_timeout = self.parser.timeout
@@ -84,8 +94,42 @@ class MetadataFinder:
         elif not direct_url:
             relevant = [c for c in candidates if _candidate_matches_query(c, query)]
             candidates = relevant
+        candidates = _deduplicate_candidates(candidates)
         candidates.sort(key=lambda c: (_candidate_query_rank(c, query), c.score), reverse=True)
         return candidates[:limit]
+
+    def _hydrate_source_candidate(
+        self,
+        candidates: list[BookCandidate],
+        query: str,
+        expected_isbn: str | None,
+        deadline: float | None,
+    ) -> list[BookCandidate]:
+        """Replace the first terse store-search result with its real product page.
+
+        Store search result cards often contain only title and author, while the
+        linked product page provides ISBN, publisher, date and tags.  Hydrating
+        one result keeps the batch time budget bounded and avoids treating a
+        skeletal search card as completed metadata.
+        """
+        if not candidates or _deadline_expired(deadline):
+            return candidates
+        first = candidates[0]
+        if first.source_kind != "store" or first.metadata.completeness_score() >= 5:
+            return candidates
+        parser_timeout = self.parser.timeout
+        try:
+            self.parser.timeout = max(0.1, min(parser_timeout, self.request_timeout, _remaining_seconds(deadline))) if deadline else min(parser_timeout, self.request_timeout)
+            hydrated = self.parser.parse_url(first.source_url, query=query, expected_isbn=expected_isbn)
+        except Exception:
+            return candidates
+        finally:
+            self.parser.timeout = parser_timeout
+        if not hydrated.metadata.title or not _candidate_matches_query(hydrated, query):
+            return candidates
+        if hydrated.metadata.completeness_score() <= first.metadata.completeness_score():
+            return candidates
+        return [hydrated, *candidates[1:]]
 
     def parse_url(self, url: str, query: str | None = None) -> BookCandidate:
         return self.parser.parse_url(url, query=query, expected_isbn=normalize_isbn(query or ""))
@@ -111,6 +155,8 @@ class MetadataFinder:
                     break
             if len(urls) >= source_url_cap:
                 break
+        if urls:
+            return urls
         queries = _web_queries(query_variants, expected_isbn=expected_isbn, max_queries=self.max_web_queries)
         for search_query in queries:
             if _deadline_expired(deadline):
@@ -129,11 +175,15 @@ def _query_variants(query: str) -> list[str]:
     variants = []
     for value in [query, *_volume_query_variants(query)]:
         for candidate in [value, *_bilingual_title_order_variants(value)]:
-            if candidate and candidate not in variants:
-                variants.append(candidate)
-            simplified = to_simplified_for_search(candidate or "")
-            if simplified and simplified not in variants:
-                variants.append(simplified)
+            for orthographic in _orthographic_query_variants(candidate):
+                if orthographic and orthographic not in variants:
+                    variants.append(orthographic)
+                traditional = to_traditional(orthographic or "")
+                if traditional and traditional not in variants:
+                    variants.append(traditional)
+                simplified = to_simplified_for_search(orthographic or "")
+                if simplified and simplified not in variants:
+                    variants.append(simplified)
     return variants
 
 
@@ -142,13 +192,37 @@ def _site_query_variants(query: str, query_variants: list[str], limit: int) -> l
         return query_variants[:limit]
     variants: list[str] = []
     for value in [*_volume_query_variants(query), query]:
-        for candidate in [value, *_bilingual_title_order_variants(value), to_simplified_for_search(value or "")]:
+        candidates = [value, *_bilingual_title_order_variants(value), to_simplified_for_search(value or "")]
+        for candidate in candidates:
+            for candidate in _orthographic_query_variants(candidate):
+                if candidate and candidate not in variants:
+                    variants.append(candidate)
+    for candidate in [query, *query_variants]:
+        for candidate in _orthographic_query_variants(candidate):
             if candidate and candidate not in variants:
                 variants.append(candidate)
-    for candidate in [query, *query_variants]:
-        if candidate and candidate not in variants:
-            variants.append(candidate)
     return variants[:limit]
+
+
+def _orthographic_query_variants(query: str | None) -> list[str]:
+    """Try common Taiwan title glyph variants that store search treats literally."""
+
+    value = query or ""
+    if not value:
+        return []
+    variants = [value]
+    replacements = [
+        ("櫃檯", "櫃臺"),
+        ("櫃檯", "櫃台"),
+        ("櫃臺", "櫃檯"),
+        ("櫃台", "櫃檯"),
+    ]
+    for old, new in replacements:
+        if old in value:
+            candidate = value.replace(old, new)
+            if candidate not in variants:
+                variants.append(candidate)
+    return variants
 
 
 def _volume_query_variants(query: str) -> list[str]:
@@ -300,10 +374,20 @@ def _web_queries(query_variants: list[str], expected_isbn: str | None = None, ma
         return queries[:max_queries]
     for variant in query_variants:
         queries.append(variant)
-    for variant in query_variants:
-        queries.extend(f"{variant} {hint}" for hint in QUERY_HINTS)
-    for variant in query_variants:
-        queries.extend(f"{variant} {source}" for source in DEFAULT_SOURCE_QUERIES)
+    if max_queries <= 4:
+        # Batch mode commonly allows only two queries.  Use its remaining
+        # budget on a trustworthy store instead of a niche web-novel hint.
+        for variant in query_variants:
+            queries.extend(f"{variant} {source}" for source in DEFAULT_SOURCE_QUERIES)
+        for variant in query_variants:
+            queries.extend(f"{variant} {hint}" for hint in QUERY_HINTS)
+    else:
+        # Keep the established hint-first ordering when callers have enough
+        # budget to search both web-novel sources and general bookstores.
+        for variant in query_variants:
+            queries.extend(f"{variant} {hint}" for hint in QUERY_HINTS)
+        for variant in query_variants:
+            queries.extend(f"{variant} {source}" for source in DEFAULT_SOURCE_QUERIES)
     return queries[:max_queries]
 
 
@@ -330,6 +414,23 @@ def _is_probably_book_page(url: str) -> bool:
     host = urlparse(url).netloc.lower()
     blocked = {"youtube.com", "youtu.be", "facebook.com", "instagram.com", "threads.com", "bilibili.com", "gamer.com.tw", "wikipedia.org"}
     return not any(host == domain or host.endswith("." + domain) for domain in blocked)
+
+
+def _deduplicate_candidates(candidates: list[BookCandidate]) -> list[BookCandidate]:
+    """Keep the richest parse when several search paths resolve to one URL."""
+    unique: dict[str, BookCandidate] = {}
+    for candidate in candidates:
+        key = candidate.source_url.rstrip("/")
+        current = unique.get(key)
+        if current is None or (
+            candidate.metadata.completeness_score(),
+            candidate.score,
+        ) > (
+            current.metadata.completeness_score(),
+            current.score,
+        ):
+            unique[key] = candidate
+    return list(unique.values())
 
 
 def _is_low_evidence_other_page(candidate: BookCandidate) -> bool:
@@ -423,9 +524,13 @@ def _candidate_query_rank(candidate: BookCandidate, query: str) -> int:
 def _matching_text_variants(text: str | None) -> list[str]:
     value = (clean_title(text or "") or text or "").lower()
     variants = [value] if value else []
-    simplified = to_simplified_for_search(value)
-    if simplified and simplified.lower() not in variants:
-        variants.append(simplified.lower())
+    for candidate in list(variants):
+        for orthographic in _orthographic_query_variants(candidate):
+            if orthographic and orthographic.lower() not in variants:
+                variants.append(orthographic.lower())
+            simplified = to_simplified_for_search(orthographic)
+            if simplified and simplified.lower() not in variants:
+                variants.append(simplified.lower())
     return variants
 
 

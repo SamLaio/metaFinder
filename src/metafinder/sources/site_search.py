@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import quote_plus, urlencode, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -31,6 +31,11 @@ BOOK_URL_PATTERNS = [re.compile(pattern) for pattern in BOOK_URL_PATTERN_TEXTS]
 
 def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0, stop_after_first_hit: bool = False) -> list[str]:
     urls: list[str] = []
+    for href in _search_tdtb_library(query, timeout=timeout):
+        if href not in urls:
+            urls.append(href)
+        if len(urls) >= limit:
+            return urls
     for template in SITE_SEARCHES:
         search_url = template.url_template.format(query=quote_plus(query))
         try:
@@ -107,6 +112,34 @@ def _strip_tracking(url: str) -> str:
     if parsed.fragment:
         return url.split("#", 1)[0]
     return url
+
+
+def _search_tdtb_library(query: str, timeout: float) -> list[str]:
+    attempts: list[dict[str, str]] = []
+    cleaned = clean_title(query) or query
+    attempts.append({"Title": cleaned})
+    parts = cleaned.rsplit(maxsplit=1)
+    if len(parts) == 2:
+        title, author = parts
+        attempts.append({"Title": title, "Author": author})
+        stripped_title = clean_title(re.sub(r"^(?:第?[0-9０-９一二三四五六七八九十百]+[集卷冊部]?|[0-9０-９]{1,3})\s*", "", title))
+        if stripped_title and stripped_title != title:
+            attempts.append({"Title": stripped_title, "Author": author})
+
+    urls: list[str] = []
+    for params in attempts:
+        search_url = "https://tdtb.org/library?" + urlencode(params)
+        try:
+            response = requests.get(search_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+            response.raise_for_status()
+        except Exception:
+            continue
+        soup = BeautifulSoup(response.text, "lxml")
+        for link in soup.find_all("a", href=True):
+            href = urljoin(response.url, link["href"])
+            if _matches_book_url(href) and href not in urls:
+                urls.append(href)
+    return urls
 
 
 def _books_result_count(soup: BeautifulSoup) -> int | None:

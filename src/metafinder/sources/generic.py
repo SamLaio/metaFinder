@@ -22,6 +22,7 @@ BASE_SOURCE_SCORE = {
     "publisher": 40,
     "government": 34,
     "store": 30,
+    "catalog": 24,
     "web-novel": 18,
     "other": 8,
 }
@@ -272,6 +273,76 @@ class GenericPageParser:
         if found:
             evidence.append("anobii-url")
 
+    def _patch_sanmin(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        host = urlparse(url).netloc.lower()
+        if not (host == "sanmin.com.tw" or host.endswith(".sanmin.com.tw")):
+            return
+
+        found = False
+        text = soup.get_text("\n", strip=True)
+        title = _first_text(soup, ["h1", ".prod_title", ".product-title", ".book-title"])
+        if title and not metadata.title:
+            metadata.title = clean_title(title)
+            found = True
+
+        fields = _label_values(text)
+        if not metadata.isbn:
+            metadata.isbn = normalize_isbn(fields.get("ISBN13") or fields.get("ISBN"))
+            found = found or bool(metadata.isbn)
+        if not metadata.publisher:
+            metadata.publisher = fields.get("出版社")
+            found = found or bool(metadata.publisher)
+        if not metadata.authors and fields.get("作者"):
+            metadata.authors = split_people(fields["作者"])
+            found = found or bool(metadata.authors)
+        if not metadata.translators and fields.get("譯者"):
+            metadata.translators = split_people(fields["譯者"])
+            found = found or bool(metadata.translators)
+        if not metadata.published_date:
+            metadata.published_date = fields.get("出版日") or fields.get("出版日期")
+            found = found or bool(metadata.published_date)
+
+        if not metadata.description:
+            description = _section_after_heading(soup, ["內容簡介", "商品簡介", "書籍簡介"])
+            if description:
+                metadata.description = description
+                found = True
+
+        if found:
+            evidence.append("sanmin-page")
+
+    def _patch_tdtb(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        host = urlparse(url).netloc.lower()
+        if not (host == "tdtb.org" or host.endswith(".tdtb.org")):
+            return
+
+        found = False
+        title = _tdtb_title(soup)
+        clean_library_title = clean_title(re.sub(r"\s*@\s*本館館藏\s*$", "", title or ""))
+        if clean_library_title and (not metadata.title or "本館館藏" in metadata.title):
+            metadata.title = clean_library_title
+            found = True
+
+        text = soup.get_text("\n", strip=True)
+        fields = _label_values(text)
+        if not metadata.authors and fields.get("作者"):
+            metadata.authors = split_people(fields["作者"])
+            found = found or bool(metadata.authors)
+        if not metadata.publisher:
+            metadata.publisher = fields.get("出版單位") or fields.get("出版社")
+            found = found or bool(metadata.publisher)
+        if not metadata.published_date:
+            metadata.published_date = fields.get("出版年份") or fields.get("出版日期")
+            found = found or bool(metadata.published_date)
+        if not metadata.description:
+            description = _tdtb_description(text)
+            if description:
+                metadata.description = description
+                found = True
+
+        if found:
+            evidence.append("tdtb-library-page")
+
     def _from_images(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         if metadata.cover_url:
             metadata.cover_url = urljoin(url, metadata.cover_url)
@@ -388,6 +459,96 @@ def _fanqie_cover_url(soup: BeautifulSoup) -> str | None:
         if match:
             return unescape(match.group(1)).replace("\\u002F", "/")
     return None
+
+
+def _first_text(soup: BeautifulSoup, selectors: list[str]) -> str | None:
+    for selector in selectors:
+        node = soup.select_one(selector)
+        if node:
+            value = clean_text(node.get_text(" ", strip=True))
+            if value:
+                return value
+    return None
+
+
+def _tdtb_title(soup: BeautifulSoup) -> str | None:
+    title = _first_text(soup, [".title"])
+    if title:
+        return title
+    for node in soup.select("main h2, h2"):
+        value = clean_text(node.get_text(" ", strip=True))
+        if value and value not in {"本館館藏", "你可能也想要看...", "最新消息", "關於我們", "服務項目", "精選內容", "學習資源"}:
+            return value
+    return None
+
+
+def _label_values(text: str) -> dict[str, str]:
+    labels = {
+        "作者",
+        "譯者",
+        "译者",
+        "出版社",
+        "出版單位",
+        "出版年份",
+        "出版日期",
+        "出版日",
+        "ISBN13",
+        "ISBN",
+    }
+    field_labels = labels | {"格式類型", "書籍類型", "錄音者", "內容簡介"}
+    values: dict[str, str] = {}
+    lines = [clean_text(line) or "" for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        if not line:
+            continue
+        match = re.match(r"^(作者|譯者|译者|出版社|出版單位|出版年份|出版日期|出版日|ISBN13|ISBN)\s*[:：]?\s*(.*)$", line)
+        if not match:
+            continue
+        label, value = match.group(1), clean_text(match.group(2)) or ""
+        if not value and index + 1 < len(lines):
+            value = clean_text(lines[index + 1]) or ""
+        if value in field_labels:
+            value = ""
+        if value:
+            values["譯者" if label == "译者" else label] = value
+    return {label: value for label, value in values.items() if label in labels and value}
+
+
+def _section_after_heading(soup: BeautifulSoup, headings: list[str]) -> str | None:
+    for node in soup.find_all(string=lambda s: bool(s and clean_text(str(s)) in headings)):
+        parent = node.parent
+        if not parent:
+            continue
+        chunks: list[str] = []
+        for sibling in parent.find_all_next():
+            name = (sibling.name or "").lower()
+            if name in {"h2", "h3", "h4"} and clean_text(sibling.get_text(" ", strip=True)) not in headings:
+                break
+            text = clean_text(sibling.get_text(" ", strip=True))
+            if text and text not in headings:
+                chunks.append(text)
+            if len(" ".join(chunks)) >= 80:
+                break
+        description = clean_text(" ".join(chunks))
+        if description:
+            return description
+    return None
+
+
+def _tdtb_description(text: str) -> str | None:
+    lines = [clean_text(line) or "" for line in text.splitlines()]
+    skip_prefixes = ("作者", "出版單位", "出版年份", "格式類型", "書籍類型")
+    chunks: list[str] = []
+    for line in lines:
+        if not line or line in {"前往登入", "回頂端"}:
+            continue
+        if line.startswith(skip_prefixes) or line.startswith(("客服信箱", "地址：")):
+            continue
+        line = re.split(r"\s*(?:客服信箱|地址：|©\s*\d{4})", line, maxsplit=1)[0]
+        if len(line) < 20:
+            continue
+        chunks.append(line)
+    return clean_text(" ".join(chunks[:3]))
 
 
 def _name_field(value: Any) -> str | None:
