@@ -7,14 +7,13 @@ from html import unescape
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-import requests
 from bs4 import BeautifulSoup
 
 from metafinder.models import BookCandidate, BookMetadata
 from metafinder.normalize import clean_text, clean_title, normalize_isbn, normalize_publisher, short_tags, split_people
 from metafinder.series import infer_series_from_title
 from metafinder.source_rules import source_info as _source_info, source_rule_for_url
-from metafinder.sources.web_search import USER_AGENT
+from metafinder.sources.web_search import USER_AGENT, polite_get
 from metafinder.tags import apply_awards_to_tags, awards_as_dict, infer_awards_from_trusted_record, infer_tags
 
 
@@ -33,7 +32,11 @@ class GenericPageParser:
     timeout: float = 20.0
 
     def fetch(self, url: str) -> str:
-        response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=self.timeout)
+        response = polite_get(
+            url,
+            headers={"User-Agent": USER_AGENT, "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8"},
+            timeout=self.timeout,
+        )
         response.raise_for_status()
         if not response.encoding or response.encoding.lower() == "iso-8859-1":
             response.encoding = response.apparent_encoding
@@ -104,7 +107,10 @@ class GenericPageParser:
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
-                continue
+                try:
+                    data = json.loads(raw, strict=False)
+                except json.JSONDecodeError:
+                    continue
             for item in _walk_jsonld(data):
                 item_type = item.get("@type") or item.get("type")
                 types = item_type if isinstance(item_type, list) else [item_type]
@@ -115,6 +121,7 @@ class GenericPageParser:
                 metadata.publisher = metadata.publisher or _name_field(item.get("publisher"))
                 date = item.get("datePublished") or item.get("dateCreated")
                 metadata.published_date = metadata.published_date or clean_text(_string(date))
+                metadata.language = metadata.language or clean_text(_string(item.get("inLanguage")))
                 isbn = normalize_isbn(_string(item.get("isbn")))
                 metadata.isbn = metadata.isbn or isbn
                 image = _image_value(item.get("image"))
@@ -255,6 +262,47 @@ class GenericPageParser:
         if found:
             evidence.append("jjwxc-page")
 
+    def _patch_pubu(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        host = urlparse(url).netloc.lower()
+        if not (host == "pubu.com.tw" or host.endswith(".pubu.com.tw")):
+            return
+
+        found = False
+        raw_title = _meta_content(soup, ["og:title", "twitter:title", "title"]) or (soup.title.get_text(" ", strip=True) if soup.title else "")
+        title_match = re.search(r"\|\s*(.*?)\s*\|\s*Pubu\b", raw_title)
+        if title_match:
+            title = clean_title(title_match.group(1))
+            if title:
+                metadata.title = title
+                found = True
+
+        raw_description = _meta_content(soup, ["og:description", "description", "twitter:description"])
+        pubu_meta = _pubu_description_parts(raw_description)
+        if pubu_meta:
+            publisher, authors, description = pubu_meta
+            if publisher and not metadata.publisher:
+                metadata.publisher = publisher
+                found = True
+            if authors and not metadata.authors:
+                metadata.authors = authors
+                found = True
+            if description:
+                metadata.description = description
+                found = True
+
+        published_date = _pubu_visible_field(soup, "發行")
+        if published_date and not metadata.published_date:
+            metadata.published_date = published_date
+            found = True
+
+        language = _pubu_visible_field(soup, "語言")
+        if language and not metadata.language:
+            metadata.language = language
+            found = True
+
+        if found:
+            evidence.append("pubu-page")
+
     def _patch_anobii(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         host = urlparse(url).netloc.lower()
         if not (host == "anobii.com" or host.endswith(".anobii.com")):
@@ -371,6 +419,8 @@ class GenericPageParser:
         metadata.eisbn = normalize_isbn(metadata.eisbn)
         metadata.language = clean_text(metadata.language)
         metadata.description = clean_text(metadata.description)
+        if _looks_like_catalog_fact_sheet(metadata.description):
+            metadata.description = None
         metadata.tags = short_tags(metadata.tags)
         if metadata.title and not metadata.series:
             series = infer_series_from_title(metadata.title)
@@ -449,6 +499,47 @@ def _image_src(img) -> str | None:
         first = srcset.split(",", 1)[0].strip()
         if first:
             return first.split()[0]
+    return None
+
+
+def _looks_like_catalog_fact_sheet(value: str | None) -> bool:
+    """Reject bookstore fact sheets that are metadata, not book descriptions."""
+
+    text = clean_text(value)
+    if not text:
+        return False
+    labels = ["書名", "原文名稱", "語言", "ISBN", "頁數", "出版社", "作者", "譯者", "出版日期", "類別"]
+    label_hits = sum(1 for label in labels if re.search(rf"{re.escape(label)}\s*[:：]", text, flags=re.I))
+    if label_hits >= 4:
+        return True
+    return bool(text.startswith("書名：") and label_hits >= 2)
+
+
+def _pubu_description_parts(value: str | None) -> tuple[str | None, list[str], str | None] | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    match = re.match(
+        r"^(?:出版|Publisher)\s*[:：]\s*(?P<publisher>[^，,]+)[，,]\s*"
+        r"(?:作者|Author)\s*[:：]\s*(?P<authors>[^，,]+)[，,]\s*(?P<description>.+)$",
+        text,
+        flags=re.I,
+    )
+    if not match:
+        return None
+    description = clean_text(re.sub(r"^(?:內容簡介|簡介)\s*[:：]\s*", "", match.group("description")))
+    return (
+        normalize_publisher(match.group("publisher")),
+        split_people(match.group("authors")),
+        description,
+    )
+
+
+def _pubu_visible_field(soup: BeautifulSoup, label: str) -> str | None:
+    lines = [line for line in (clean_text(part) for part in soup.get_text("\n", strip=True).split("\n")) if line]
+    for index, line in enumerate(lines[:-1]):
+        if line == label:
+            return lines[index + 1]
     return None
 
 
@@ -560,4 +651,7 @@ def _names_field(value: Any) -> list[str]:
         return []
     if isinstance(value, list):
         return split_people([_string(v) or "" for v in value])
-    return split_people(_string(value))
+    raw = _string(value)
+    if raw and "," in raw and re.search(r"[\u3400-\u9fff\u3040-\u30ff]", raw):
+        raw = raw.replace(",", "、")
+    return split_people(raw)

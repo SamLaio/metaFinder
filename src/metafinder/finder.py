@@ -148,14 +148,14 @@ class MetadataFinder:
             if _deadline_expired(deadline):
                 return urls
             timeout = min(_request_timeout(self.request_timeout, deadline), 2.0)
-            for url in search_source_sites(variant, limit=per_variant_limit, timeout=timeout, stop_after_first_hit=bool(expected_isbn)):
+            for url in search_source_sites(variant, limit=per_variant_limit, timeout=timeout, stop_after_first_hit=False):
                 if url not in urls:
                     urls.append(url)
                 if len(urls) >= source_url_cap:
                     break
             if len(urls) >= source_url_cap:
                 break
-        if urls:
+        if urls and not expected_isbn:
             return urls
         queries = _web_queries(query_variants, expected_isbn=expected_isbn, max_queries=self.max_web_queries)
         for search_query in queries:

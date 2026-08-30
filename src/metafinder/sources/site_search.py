@@ -4,13 +4,12 @@ import re
 from dataclasses import dataclass
 from urllib.parse import quote_plus, urlencode, urljoin, urlparse
 
-import requests
 from bs4 import BeautifulSoup
 
 from metafinder.models import BookCandidate, BookMetadata
 from metafinder.normalize import clean_title, normalize_isbn, split_people
 from metafinder.source_rules import BOOK_URL_PATTERNS as BOOK_URL_PATTERN_TEXTS
-from metafinder.sources.web_search import USER_AGENT
+from metafinder.sources.web_search import USER_AGENT, polite_get
 
 
 @dataclass(frozen=True)
@@ -39,7 +38,7 @@ def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0, stop
     for template in SITE_SEARCHES:
         search_url = template.url_template.format(query=quote_plus(query))
         try:
-            response = requests.get(search_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+            response = polite_get(search_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
             response.raise_for_status()
         except Exception:
             continue
@@ -60,7 +59,7 @@ def search_source_candidates(query: str, limit: int = 3, timeout: float = 15.0, 
     candidates: list[BookCandidate] = []
     search_url = SITE_SEARCHES[0].url_template.format(query=quote_plus(query))
     try:
-        response = requests.get(search_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+        response = polite_get(search_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
         response.raise_for_status()
     except Exception:
         return candidates
@@ -130,7 +129,7 @@ def _search_tdtb_library(query: str, timeout: float) -> list[str]:
     for params in attempts:
         search_url = "https://tdtb.org/library?" + urlencode(params)
         try:
-            response = requests.get(search_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+            response = polite_get(search_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
             response.raise_for_status()
         except Exception:
             continue

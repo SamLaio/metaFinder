@@ -2,6 +2,7 @@ from metafinder.finder import MetadataFinder, _candidate_matches_query, _candida
 from metafinder.models import BookCandidate, BookMetadata
 from metafinder.sources.generic import GenericPageParser
 from metafinder.sources.site_search import _matches_book_url, _strip_tracking, search_source_candidates
+from metafinder.sources import web_search
 
 
 def candidate(title: str, authors: list[str], score: float) -> BookCandidate:
@@ -21,6 +22,39 @@ def test_default_search_budget_is_safe_for_batch_use():
     assert finder.max_search_seconds == 12.0
     assert finder.max_search_seconds < 20
     assert finder.max_web_queries == 4
+
+
+def test_books_requests_are_throttled(monkeypatch):
+    sleeps = []
+    requested = []
+
+    class Response:
+        pass
+
+    monkeypatch.setattr(web_search, "_last_books_request_at", 10.0)
+    monkeypatch.setattr(web_search.time, "monotonic", lambda: 11.0)
+    monkeypatch.setattr(web_search.time, "sleep", sleeps.append)
+    monkeypatch.setattr(web_search.requests, "get", lambda url, **kwargs: requested.append(url) or Response())
+
+    web_search.polite_get("https://www.books.com.tw/products/0010912143")
+
+    assert sleeps == [2.0]
+    assert requested == ["https://www.books.com.tw/products/0010912143"]
+
+
+def test_non_books_requests_are_not_throttled(monkeypatch):
+    sleeps = []
+
+    class Response:
+        pass
+
+    monkeypatch.setattr(web_search, "_last_books_request_at", 10.0)
+    monkeypatch.setattr(web_search.time, "sleep", sleeps.append)
+    monkeypatch.setattr(web_search.requests, "get", lambda url, **kwargs: Response())
+
+    web_search.polite_get("https://readmoo.com/book/210213305000101")
+
+    assert sleeps == []
 
 
 def test_store_search_result_is_hydrated_with_product_page_metadata(monkeypatch):
@@ -435,7 +469,7 @@ def test_books_unique_search_result_builds_candidate(monkeypatch):
         def raise_for_status(self):
             pass
 
-    monkeypatch.setattr("metafinder.sources.site_search.requests.get", lambda url, headers, timeout: Response())
+    monkeypatch.setattr("metafinder.sources.site_search.polite_get", lambda url, headers, timeout: Response())
 
     candidates = search_source_candidates("21世紀的21位思想家", expected_isbn="9787532182978")
 
@@ -456,7 +490,7 @@ def test_books_multiple_search_results_do_not_build_guess_candidate(monkeypatch)
         def raise_for_status(self):
             pass
 
-    monkeypatch.setattr("metafinder.sources.site_search.requests.get", lambda url, headers, timeout: Response())
+    monkeypatch.setattr("metafinder.sources.site_search.polite_get", lambda url, headers, timeout: Response())
 
     assert search_source_candidates("01 86-不存在的戰區") == []
 
@@ -483,7 +517,7 @@ def test_books_isbn_search_result_keeps_multiple_product_candidates(monkeypatch)
         def raise_for_status(self):
             pass
 
-    monkeypatch.setattr("metafinder.sources.site_search.requests.get", lambda url, headers, timeout: Response())
+    monkeypatch.setattr("metafinder.sources.site_search.polite_get", lambda url, headers, timeout: Response())
 
     candidates = search_source_candidates("9789575641801", expected_isbn="9789575641801", limit=5)
 
@@ -512,7 +546,7 @@ def test_tdtb_site_search_strips_leading_volume_prefix(monkeypatch):
             return Response('<a href="/library/3248">潛艇迷宮</a>')
         return Response("")
 
-    monkeypatch.setattr("metafinder.sources.site_search.requests.get", fake_get)
+    monkeypatch.setattr("metafinder.sources.site_search.polite_get", fake_get)
 
     assert search_source_candidates("29潛艇迷宮 倪匡") == []
     urls = __import__("metafinder.sources.site_search", fromlist=["search_source_sites"]).search_source_sites("29潛艇迷宮 倪匡")
@@ -550,6 +584,132 @@ def test_sanmin_product_page_patch_extracts_visible_book_fields():
     assert candidate.metadata.translators == ["張晶晶"]
     assert candidate.metadata.published_date == "2024-01-10"
     assert "sanmin-page" in candidate.evidence
+
+
+def test_catalog_fact_sheet_is_not_used_as_description():
+    html = """
+    <html><head>
+      <meta property="og:title" content="即使，這份戀情今晚就會從世界上消失" />
+      <meta property="og:description" content="書名：即使，這份戀情今晚就會從世界上消失，原文名稱：今夜、世界からこの戀が消えても，語言：繁體中文，ISBN：9786269533831，頁數：304，出版社：平裝本，作者：一條岬，譯者：林于楟，出版日期：2022/01/10，類別：文學小說" />
+    </head><body></body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://www.books.com.tw/products/0010912143", html)
+
+    assert candidate.metadata.description is None
+
+
+def test_pubu_product_page_strips_description_prefix_and_reads_fields():
+    html = """
+    <html><head>
+      <meta property="og:title" content=" | 真假夫君 | Pubu - " />
+      <meta property="og:description" content="出版：宋雨桐工作室，作者：宋雨桐，☆浪漫女王宋雨桐，狗屋經典，浪漫回歸☆ 一覺醒來，他從權傾天下的王爺，變成了病弱書生。" />
+      <meta property="og:image" content="https://res2.pubu.tw/docs/587797/56671/6FhVHo_l.jpg" />
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Book",
+        "name": "真假夫君",
+        "author": "宋雨桐",
+        "publisher": "宋雨桐工作室",
+        "inLanguage": "zh-TW",
+        "image": "https://res2.pubu.tw/docs/587797/56671/6FhVHo_l.jpg",
+        "url": "https://www.pubu.com.tw/ebook/688165",
+        "description": "",
+        "isbn": ""
+      }
+      </script>
+    </head><body>
+      <main>
+        發行
+        2026/08/18
+        語言
+        繁體中文
+      </main>
+    </body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://www.pubu.com.tw/ebook/688165", html)
+
+    assert candidate.source_name == "Pubu"
+    assert candidate.metadata.title == "真假夫君"
+    assert candidate.metadata.authors == ["宋雨桐"]
+    assert candidate.metadata.publisher == "宋雨桐工作室"
+    assert candidate.metadata.published_date == "2026/08/18"
+    assert candidate.metadata.language == "zh-TW"
+    assert candidate.metadata.description.startswith("☆浪漫女王宋雨桐")
+    assert "出版：" not in candidate.metadata.description
+    assert "pubu-page" in candidate.evidence
+
+
+def test_json_ld_cjk_authors_split_ascii_comma():
+    html = """
+    <html><head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Book",
+        "name": "轉轉轉遊樂園",
+        "author": "青山美智子,田中達也",
+        "publisher": "皇冠文化",
+        "inLanguage": "zh-TW"
+      }
+      </script>
+    </head><body></body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://www.pubu.com.tw/ebook/689156", html)
+
+    assert candidate.metadata.authors == ["青山美智子", "田中達也"]
+
+
+def test_pubu_product_page_accepts_english_description_prefix():
+    html = """
+    <html><head>
+      <meta property="og:title" content=" | Book Title | Pubu - " />
+      <meta name="description" content="Publisher: Example Press, Author: Example Author, Real description text." />
+    </head><body></body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://www.pubu.com.tw/ebook/123456", html)
+
+    assert candidate.metadata.publisher == "Example Press"
+    assert candidate.metadata.authors == ["Example Author"]
+    assert candidate.metadata.description == "Real description text."
+
+
+def test_isbn_source_search_does_not_stop_after_books(monkeypatch):
+    calls = []
+
+    def fake_search_source_sites(query, limit, timeout, stop_after_first_hit):
+        calls.append(stop_after_first_hit)
+        return []
+
+    monkeypatch.setattr("metafinder.finder.search_source_sites", fake_search_source_sites)
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr("metafinder.finder.lookup_openlibrary_isbn", lambda *args, **kwargs: None)
+
+    finder = MetadataFinder(max_search_seconds=3, max_web_queries=0)
+    finder.search("9786269533831")
+
+    assert calls == [False]
+
+
+def test_isbn_search_still_uses_web_queries_after_source_hits(monkeypatch):
+    web_queries = []
+
+    class Result:
+        url = "https://www.pubu.com.tw/ebook/279471"
+
+    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda *args, **kwargs: ["https://www.books.com.tw/products/0010912143"])
+    monkeypatch.setattr("metafinder.finder.search_web", lambda query, **kwargs: web_queries.append(query) or [Result()])
+
+    finder = MetadataFinder(max_search_seconds=3, max_web_queries=1)
+    urls = finder._collect_urls("9786269533831", expected_isbn="9786269533831", deadline=None)
+
+    assert "https://www.books.com.tw/products/0010912143" in urls
+    assert "https://www.pubu.com.tw/ebook/279471" in urls
+    assert web_queries
 
 
 def test_direct_product_url_does_not_treat_url_number_as_expected_isbn(monkeypatch):

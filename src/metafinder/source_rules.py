@@ -20,7 +20,7 @@ SOURCE_RULES = (
     SourceRule(("books.com.tw",), "博客來", "store", ("https?://(?:www\\.)?books\\.com\\.tw/products/[A-Za-z0-9]+",)),
     SourceRule(("readmoo.com",), "Readmoo", "store", ("https?://readmoo\\.com/book/[0-9A-Za-z]+",)),
     SourceRule(("sanmin.com.tw",), "三民網路書店", "store", ("https?://(?:www\\.)?sanmin\\.com\\.tw/product/index/[0-9A-Za-z_-]+",), patch="sanmin"),
-    SourceRule(("pubu.com.tw",), "Pubu", "store", ("https?://(?:www\\.)?pubu\\.com\\.tw/ebook/[0-9A-Za-z_-]+",)),
+    SourceRule(("pubu.com.tw",), "Pubu", "store", ("https?://(?:www\\.)?pubu\\.com\\.tw/ebook/[0-9A-Za-z_-]+",), patch="pubu"),
     SourceRule(("kobo.com",), "Kobo", "store"),
     SourceRule(("bookwalker.com.tw",), "BOOKWALKER", "store"),
     SourceRule(("eslite.com",), "誠品線上", "store", ("https?://(?:www\\.)?eslite\\.com/product/[0-9A-Za-z_-]+",)),

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
+import time
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import requests
@@ -10,6 +12,10 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
 )
+BOOKS_REQUEST_INTERVAL_SECONDS = 3.0
+
+_books_request_lock = threading.Lock()
+_last_books_request_at = 0.0
 
 
 @dataclass
@@ -17,6 +23,21 @@ class SearchResult:
     title: str
     url: str
     snippet: str | None = None
+
+
+def polite_get(url: str, **kwargs) -> requests.Response:
+    """Throttle direct Books.com.tw requests to avoid tripping crawler defenses."""
+
+    global _last_books_request_at
+    if not urlparse(url).netloc.endswith("books.com.tw"):
+        return requests.get(url, **kwargs)
+    with _books_request_lock:
+        elapsed = time.monotonic() - _last_books_request_at
+        if elapsed < BOOKS_REQUEST_INTERVAL_SECONDS:
+            time.sleep(BOOKS_REQUEST_INTERVAL_SECONDS - elapsed)
+        response = requests.get(url, **kwargs)
+        _last_books_request_at = time.monotonic()
+        return response
 
 
 def _unwrap_duckduckgo_url(url: str) -> str:
