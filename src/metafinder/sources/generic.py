@@ -251,6 +251,16 @@ class GenericPageParser:
             metadata.publisher = "晉江文學城"
             found = True
 
+        description = _jjwxc_description(text)
+        if description and not metadata.description:
+            metadata.description = description
+            found = True
+
+        tags = _jjwxc_tags(text)
+        if tags and not metadata.tags:
+            metadata.tags = tags
+            found = True
+
         if not metadata.cover_url:
             for img in soup.find_all("img"):
                 src = _image_src(img)
@@ -418,7 +428,7 @@ class GenericPageParser:
         metadata.isbn = normalize_isbn(metadata.isbn)
         metadata.eisbn = normalize_isbn(metadata.eisbn)
         metadata.language = clean_text(metadata.language)
-        metadata.description = clean_text(metadata.description)
+        metadata.description = _strip_description_field_prefixes(clean_text(metadata.description))
         if _looks_like_catalog_fact_sheet(metadata.description):
             metadata.description = None
         metadata.tags = short_tags(metadata.tags)
@@ -515,6 +525,23 @@ def _looks_like_catalog_fact_sheet(value: str | None) -> bool:
     return bool(text.startswith("書名：") and label_hits >= 2)
 
 
+def _strip_description_field_prefixes(value: str | None) -> str | None:
+    """Remove metadata labels accidentally prepended to a real description."""
+
+    text = clean_text(value)
+    if not text:
+        return None
+    match = re.match(
+        r"^(?:出版|出版社|Publisher)\s*[:：]\s*[^，,]+[，,]\s*"
+        r"(?:作者|Author)\s*[:：]\s*[^，,]+[，,]\s*(?P<description>.+)$",
+        text,
+        flags=re.I,
+    )
+    if match:
+        return clean_text(re.sub(r"^(?:內容簡介|簡介)\s*[:：]\s*", "", match.group("description")))
+    return text
+
+
 def _pubu_description_parts(value: str | None) -> tuple[str | None, list[str], str | None] | None:
     text = clean_text(value)
     if not text:
@@ -541,6 +568,98 @@ def _pubu_visible_field(soup: BeautifulSoup, label: str) -> str | None:
         if line == label:
             return lines[index + 1]
     return None
+
+
+def _jjwxc_lines(text: str) -> list[str]:
+    return [line for line in (clean_text(part) for part in text.split("\n")) if line]
+
+
+def _jjwxc_description(text: str) -> str | None:
+    lines = _jjwxc_lines(text)
+    try:
+        start = lines.index("文案") + 1
+    except ValueError:
+        return None
+    stops = {
+        "內容標籤：",
+        "內容標籤",
+        "一句話簡介：",
+        "一句話簡介",
+        "立意：",
+        "立意",
+        "文章基本資訊",
+        "文章基本信息",
+    }
+    chunks: list[str] = []
+    for line in lines[start:]:
+        if line in stops or any(line.startswith(stop) for stop in stops):
+            break
+        if any(
+            marker in line
+            for marker in [
+                "正文完結",
+                "正文完结",
+                "謝謝支持晉江正版",
+                "谢谢支持晋江正版",
+                "預收",
+                "预收",
+                "新坑",
+            ]
+        ):
+            continue
+        if re.match(r"^(?:注意|避雷|戳【?作者專欄|戳【?作者专栏|連載文|连载文|已完結文|已完结文|美食文|娛樂圈|娱乐圈|快穿文|電競文|电竞文)", line):
+            break
+        if re.match(r"^[—\-＝=]{3,}", line):
+            break
+        chunks.append(line)
+    description = clean_text(" ".join(chunks))
+    return description[:1200] if description else None
+
+
+def _jjwxc_tags(text: str) -> list[str]:
+    lines = _jjwxc_lines(text)
+    tags: list[str] = []
+    for marker in ("內容標籤：", "內容標籤"):
+        if marker not in lines:
+            continue
+        for line in lines[lines.index(marker) + 1 :]:
+            if (
+                line.startswith("一句話簡介")
+                or line.startswith("搜索關鍵字")
+                or line.startswith("搜索关键字")
+                or line in {"文章基本資訊", "文章基本信息", "立意：", "立意"}
+            ):
+                break
+            if _is_jjwxc_content_tag(line):
+                tags.append(line)
+        break
+
+    for marker in ("文章類型：", "文章類型", "文章类型：", "文章类型"):
+        if marker in lines:
+            index = lines.index(marker)
+            if index + 1 < len(lines):
+                tags.extend(lines[index + 1].split("-"))
+            break
+    return short_tags(tags)
+
+
+def _is_jjwxc_content_tag(line: str) -> bool:
+    if not line or any(marker in line for marker in ["：", ":", "主角", "配角", "其它", "其他"]):
+        return False
+    # 晉江「內容標籤」常和角色/搜尋關鍵字混排；只收明確題材詞，避免人物名進 Calibre tag。
+    return bool(
+        re.search(
+            r"(重生|穿越|架空|輕鬆|轻松|正劇|正剧|悲劇|悲剧|甜文|爽文|虐文|種田|种田|"
+            r"隨身空間|随身空间|系統|系统|美食|經營|经营|基建|升級|升级|"
+            r"情有獨鍾|情有独钟|天作之合|歡喜冤家|欢喜冤家|宮廷侯爵|宫廷侯爵|"
+            r"穿書|穿书|打臉|打脸|女強|女强|男強|男强|強強|强强|"
+            r"仙俠|仙侠|修真|武俠|武侠|玄幻|奇幻|西幻|都市|豪門|豪门|"
+            r"娛樂圈|娱乐圈|電競|电竞|校園|校园|年代|科舉|科举|"
+            r"快穿|末世|無限流|无限流|直播|團寵|团宠|萌寵|萌宠|"
+            r"星際|星际|機甲|机甲|異能|异能|懸疑|悬疑|推理|開掛|开挂)$",
+            line,
+        )
+    )
 
 
 def _fanqie_cover_url(soup: BeautifulSoup) -> str | None:

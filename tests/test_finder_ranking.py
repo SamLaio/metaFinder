@@ -678,6 +678,20 @@ def test_pubu_product_page_accepts_english_description_prefix():
     assert candidate.metadata.description == "Real description text."
 
 
+def test_generic_description_strips_publisher_author_prefix():
+    html = """
+    <html><head>
+      <meta property="og:title" content="可能內容不實" />
+      <meta name="description" content="Publisher: 平安, Author: 艾力克斯．艾德曼斯, 要在充斥錯誤的世界保持清醒，只要有這本書就可以。" />
+    </head><body></body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://example.com/book/1", html)
+
+    assert candidate.metadata.description == "要在充斥錯誤的世界保持清醒，只要有這本書就可以。"
+    assert "Publisher:" not in candidate.metadata.description
+
+
 def test_isbn_source_search_does_not_stop_after_books(monkeypatch):
     calls = []
 
