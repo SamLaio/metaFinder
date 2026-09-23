@@ -45,8 +45,58 @@ REGION_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
     ("丹麥", ("丹麥", "Danish", "Denmark")),
     ("芬蘭", ("芬蘭", "Finnish", "Finland")),
     ("波蘭", ("波蘭", "Polish", "Poland")),
+    ("葡萄牙", ("葡萄牙", "Portuguese", "Portugal")),
     ("俄羅斯", ("俄羅斯", "Russian", "Russia")),
 ]
+
+# Only confirmed authors and unambiguous scripts belong here.  Chinese names and
+# Latin names require source evidence rather than a nationality guess.
+AUTHOR_REGION_OVERRIDES: dict[str, str] = {
+    "娥蘇拉．勒瑰恩": "美國",
+    "陳鴻圖": "臺灣",
+    "藤井太洋": "日本",
+    "鴉ぴえろ": "日本",
+    "棚架ユウ": "日本",
+    "鷹羽 シン": "日本",
+    "松浦": "日本",
+    "るう": "日本",
+    "山口悟": "日本",
+    "結城涼": "日本",
+    "湯瑪斯．肯納利": "澳洲",
+    "薄月棲煙": "中國",
+    "約亨．古奇": "德國",
+    "約亨．古奇Jochen Gutsch": "德國",
+    "馬克西姆．萊奧": "德國",
+    "馬克西姆．萊奧Maxim Leo": "德國",
+    "傅大為": "臺灣",
+    "蔡小雀": "臺灣",
+    "小島俊一": "日本",
+    "貞本義行": "日本",
+    "結石": "日本",
+    "宮迫宗一郎": "日本",
+    "九井諒子": "日本",
+    "岡田和人": "日本",
+    "布蘭登．山德森": "美國",
+    "高羅佩": "荷蘭",
+    "萊恩．金格拉斯": "美國",
+    "約翰．費恩斯坦": "美國",
+}
+
+
+def author_region_tags(authors: Iterable[str]) -> list[str]:
+    """Return only author-origin tags supported by a known mapping or script."""
+    regions: list[str] = []
+    for author in authors:
+        # Store pages sometimes prefix a credited person with a role label.
+        name = re.sub(r"^(?:原作|作者|漫畫|繪者|腳本)\s*[：:]\s*", "", clean_text(author))
+        region = AUTHOR_REGION_OVERRIDES.get(name)
+        if region:
+            _append(regions, region)
+        elif re.search(r"[\u3040-\u30ff]", name):
+            _append(regions, "日本")
+        elif re.search(r"[\uac00-\ud7af]", name):
+            _append(regions, "韓國")
+    return regions
 
 
 GENRE_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
@@ -68,7 +118,7 @@ GENRE_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
     ("百合", ("百合", "GL小說", "GL漫畫", "girls love")),
     ("歷史", ("歷史", "史實", "historical")),
     ("戰記", ("戰記", "戰爭", "war story")),
-    ("軍事", ("軍事", "military")),
+    ("軍事", ("軍事小說", "軍事題材", "軍事史", "軍事戰略", "軍武", "military fiction", "military history")),
     ("傳記", ("傳記", "回憶錄", "memoir", "biography")),
     ("散文", ("散文", "essay", "essays")),
     ("詩", ("詩集", "poetry", "poem")),
@@ -183,6 +233,9 @@ def infer_tags(metadata: BookMetadata, extra_text: str | None = None) -> TagInfe
     for tag, needles in REGION_PATTERNS:
         if _contains_any(region_text, needles):
             _append(tags, tag)
+
+    for tag in author_region_tags(metadata.authors or []):
+        _append(tags, tag)
 
     for tag, needles in GENRE_PATTERNS:
         if _contains_any(genre_text, needles):

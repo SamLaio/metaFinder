@@ -55,3 +55,8 @@ def test_jjwxc_patch_extracts_description_and_tags():
     assert "林熙冬" not in candidate.metadata.tags
     assert "勸人學醫遭雷劈" not in candidate.metadata.tags
     assert "很多醫生" not in candidate.metadata.tags
+def test_description_stops_at_next_book_promotion_but_skips_leading_notice():
+    from metafinder.sources.generic import _jjwxc_description
+
+    text = "文案\n《別本》預收，點進專欄收藏\n少女穿越成反派家的女兒。\n下一本預收《古樹》\n這是另一位主角的故事。\n內容標籤："
+    assert _jjwxc_description(text) == "少女穿越成反派家的女兒。"

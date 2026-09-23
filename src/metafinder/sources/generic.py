@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from metafinder.models import BookCandidate, BookMetadata
-from metafinder.normalize import clean_text, clean_title, normalize_isbn, normalize_publisher, short_tags, split_people
+from metafinder.normalize import clean_description, clean_text, clean_title, normalize_isbn, normalize_publisher, short_tags, split_people
 from metafinder.series import infer_series_from_title
 from metafinder.source_rules import source_info as _source_info, source_rule_for_url
 from metafinder.sources.web_search import USER_AGENT, polite_get
@@ -43,8 +43,9 @@ class GenericPageParser:
         return response.text
 
     def parse_url(self, url: str, query: str | None = None, expected_isbn: str | None = None) -> BookCandidate:
-        html = self.fetch(url)
-        return self.parse_html(url, html, query=query, expected_isbn=expected_isbn)
+        parse_url = _qidian_mobile_equivalent(url) or url
+        html = self.fetch(parse_url)
+        return self.parse_html(parse_url, html, query=query, expected_isbn=expected_isbn)
 
     def parse_html(
         self,
@@ -98,6 +99,12 @@ class GenericPageParser:
     def _extract_fallback_metadata(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         self._from_visible_labels(soup, metadata, evidence)
         self._from_images(soup, url, metadata, evidence)
+        description_panel = soup.select_one(".woocommerce-Tabs-panel--description#tab-description")
+        if description_panel is not None:
+            description = clean_description(description_panel.get_text("\n", strip=True))
+            if description and not _looks_like_catalog_fact_sheet(description):
+                metadata.description = description
+                evidence.append("woocommerce-description-panel")
 
     def _from_json_ld(self, soup: BeautifulSoup, metadata: BookMetadata, evidence: list[str]) -> None:
         for script in soup.find_all("script", type=lambda t: t and "ld+json" in t):
@@ -117,7 +124,7 @@ class GenericPageParser:
                 if not any(str(t).lower() in {"book", "product"} for t in types if t):
                     continue
                 metadata.title = metadata.title or clean_title(_string(item.get("name")))
-                metadata.description = metadata.description or clean_text(_string(item.get("description")))
+                metadata.description = metadata.description or clean_description(_string(item.get("description")))
                 metadata.publisher = metadata.publisher or _name_field(item.get("publisher"))
                 date = item.get("datePublished") or item.get("dateCreated")
                 metadata.published_date = metadata.published_date or clean_text(_string(date))
@@ -137,7 +144,7 @@ class GenericPageParser:
         description = _meta_content(soup, ["og:description", "description", "twitter:description"])
         image = _meta_content(soup, ["og:image", "og:image:secure_url", "twitter:image", "twitter:image:src", "image"])
         metadata.title = metadata.title or clean_title(title or (soup.title.get_text(" ", strip=True) if soup.title else None))
-        metadata.description = metadata.description or clean_text(description)
+        metadata.description = metadata.description or clean_description(description)
         if image and not metadata.cover_url:
             metadata.cover_url = urljoin(url, image)
         if title or description or image:
@@ -214,7 +221,7 @@ class GenericPageParser:
 
         abstract = soup.select_one(".page-abstract-content")
         if abstract:
-            metadata.description = clean_text(abstract.get_text(" ", strip=True)) or metadata.description
+            metadata.description = clean_description(abstract.get_text("\n", strip=True)) or metadata.description
             found = True
 
         if not metadata.cover_url:
@@ -313,6 +320,18 @@ class GenericPageParser:
         if found:
             evidence.append("pubu-page")
 
+    def _patch_readmoo(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        """Prefer Readmoo's on-page blurb over its deliberately shortened meta preview."""
+        host = urlparse(url).netloc.lower()
+        if not (host == "readmoo.com" or host.endswith(".readmoo.com")):
+            return
+
+        panel = soup.select_one(".book-description-container .book-description")
+        description = clean_description(panel.get_text("\n", strip=True)) if panel else None
+        if description and len(description) > len(metadata.description or ""):
+            metadata.description = description
+            evidence.append("readmoo-description-panel")
+
     def _patch_anobii(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         host = urlparse(url).netloc.lower()
         if not (host == "anobii.com" or host.endswith(".anobii.com")):
@@ -344,6 +363,10 @@ class GenericPageParser:
             found = True
 
         fields = _label_values(text)
+        for field in soup.select("li h3"):
+            label, separator, value = field.get_text(" ", strip=True).partition("：")
+            if separator and label.strip() in {"作者", "譯者", "出版社", "出版日", "ISBN13"}:
+                fields[label.strip()] = value.strip()
         if not metadata.isbn:
             metadata.isbn = normalize_isbn(fields.get("ISBN13") or fields.get("ISBN"))
             found = found or bool(metadata.isbn)
@@ -353,14 +376,19 @@ class GenericPageParser:
         if not metadata.authors and fields.get("作者"):
             metadata.authors = split_people(fields["作者"])
             found = found or bool(metadata.authors)
-        if not metadata.translators and fields.get("譯者"):
+        if fields.get("譯者") and fields["譯者"] not in {"簡介", "：", ":"}:
             metadata.translators = split_people(fields["譯者"])
             found = found or bool(metadata.translators)
         if not metadata.published_date:
             metadata.published_date = fields.get("出版日") or fields.get("出版日期")
             found = found or bool(metadata.published_date)
 
-        if not metadata.description:
+        heading = soup.select_one("#Intro1")
+        body = heading.find_next_sibling("div", class_="SectionBody") if heading else None
+        if body:
+            metadata.description = clean_description(body.get_text("\n", strip=True))
+            found = found or bool(metadata.description)
+        elif not metadata.description or _looks_like_catalog_fact_sheet(metadata.description):
             description = _section_after_heading(soup, ["內容簡介", "商品簡介", "書籍簡介"])
             if description:
                 metadata.description = description
@@ -428,7 +456,7 @@ class GenericPageParser:
         metadata.isbn = normalize_isbn(metadata.isbn)
         metadata.eisbn = normalize_isbn(metadata.eisbn)
         metadata.language = clean_text(metadata.language)
-        metadata.description = _strip_description_field_prefixes(clean_text(metadata.description))
+        metadata.description = _strip_description_field_prefixes(clean_description(metadata.description))
         if _looks_like_catalog_fact_sheet(metadata.description):
             metadata.description = None
         metadata.tags = short_tags(metadata.tags)
@@ -447,6 +475,11 @@ class GenericPageParser:
     ) -> float:
         score = BASE_SOURCE_SCORE.get(source_kind, BASE_SOURCE_SCORE["other"])
         score += metadata.completeness_score() * 4
+        description_length = len(metadata.description or "")
+        if description_length >= 160:
+            score += 2
+        elif 0 < description_length < 80:
+            score -= 2
         if expected_isbn and expected_isbn in {metadata.isbn, metadata.eisbn}:
             score += 25
         if query and metadata.title:
@@ -512,10 +545,21 @@ def _image_src(img) -> str | None:
     return None
 
 
+def _qidian_mobile_equivalent(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if host != "www.qidian.com":
+        return None
+    match = re.fullmatch(r"/book/(\d+)/?", parsed.path)
+    if not match:
+        return None
+    return f"https://m.qidian.com/book/{match.group(1)}/"
+
+
 def _looks_like_catalog_fact_sheet(value: str | None) -> bool:
     """Reject bookstore fact sheets that are metadata, not book descriptions."""
 
-    text = clean_text(value)
+    text = clean_description(value)
     if not text:
         return False
     labels = ["書名", "原文名稱", "語言", "ISBN", "頁數", "出版社", "作者", "譯者", "出版日期", "類別"]
@@ -528,7 +572,7 @@ def _looks_like_catalog_fact_sheet(value: str | None) -> bool:
 def _strip_description_field_prefixes(value: str | None) -> str | None:
     """Remove metadata labels accidentally prepended to a real description."""
 
-    text = clean_text(value)
+    text = clean_description(value)
     if not text:
         return None
     match = re.match(
@@ -538,12 +582,12 @@ def _strip_description_field_prefixes(value: str | None) -> str | None:
         flags=re.I,
     )
     if match:
-        return clean_text(re.sub(r"^(?:內容簡介|簡介)\s*[:：]\s*", "", match.group("description")))
+        return clean_description(re.sub(r"^(?:內容簡介|簡介)\s*[:：]\s*", "", match.group("description")))
     return text
 
 
 def _pubu_description_parts(value: str | None) -> tuple[str | None, list[str], str | None] | None:
-    text = clean_text(value)
+    text = clean_description(value)
     if not text:
         return None
     match = re.match(
@@ -554,7 +598,7 @@ def _pubu_description_parts(value: str | None) -> tuple[str | None, list[str], s
     )
     if not match:
         return None
-    description = clean_text(re.sub(r"^(?:內容簡介|簡介)\s*[:：]\s*", "", match.group("description")))
+    description = clean_description(re.sub(r"^(?:內容簡介|簡介)\s*[:：]\s*", "", match.group("description")))
     return (
         normalize_publisher(match.group("publisher")),
         split_people(match.group("authors")),
@@ -593,6 +637,8 @@ def _jjwxc_description(text: str) -> str | None:
     chunks: list[str] = []
     for line in lines[start:]:
         if line in stops or any(line.startswith(stop) for stop in stops):
+            break
+        if chunks and re.search(r"預收|预收|新坑|下(?:一)?本[：:《]|新文[《：:]", line):
             break
         if any(
             marker in line
@@ -711,7 +757,7 @@ def _label_values(text: str) -> dict[str, str]:
     for index, line in enumerate(lines):
         if not line:
             continue
-        match = re.match(r"^(作者|譯者|译者|出版社|出版單位|出版年份|出版日期|出版日|ISBN13|ISBN)\s*[:：]?\s*(.*)$", line)
+        match = re.match(r"^(作者|譯者|译者|出版社|出版單位|出版年份|出版日期|出版日|ISBN13|ISBN)(?:\s*[:：]\s*|\s+|$)(.*)$", line)
         if not match:
             continue
         label, value = match.group(1), clean_text(match.group(2)) or ""

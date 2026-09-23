@@ -61,7 +61,14 @@ def infer_series_from_title(title: str | None) -> SeriesInfo | None:
         if series and index:
             return SeriesInfo(series, float(index), "title-part")
 
-    match = re.fullmatch(r"(.+?)([0-9１２３４５６７８９]|[一二兩三四五六七八九十])", value)
+    match = re.fullmatch(r"(.+?)\s*卷\s*([0-9０-９]+|[一二兩三四五六七八九十]+)\s*(?:[（(](?:終|完)[）)])?", value)
+    if match:
+        index = _number(match.group(2))
+        series = _clean_series_name(match.group(1))
+        if series and index:
+            return SeriesInfo(series, float(index), "title-juan")
+
+    match = re.fullmatch(r"(.+?)(?<![0-9０-９])([0-9０-９]{1,3}|[一二兩三四五六七八九十])", value)
     if match:
         series = _clean_series_name(match.group(1))
         index = _number(match.group(2))
@@ -103,7 +110,7 @@ def series_evidence_priority(series_name: str, evidence: str) -> int:
         return 85
     if evidence.startswith("content-title"):
         return 80
-    if any(evidence.endswith(marker) for marker in ("trailing-volume", "split-volume")):
+    if any(evidence.endswith(marker) for marker in ("trailing-volume", "split-volume", "title-juan")):
         return 70
     return 0
 

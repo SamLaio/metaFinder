@@ -81,9 +81,20 @@ def to_simplified_for_search(text: str | None) -> str | None:
 def clean_text(text: str | None) -> str | None:
     if not text:
         return None
-    text = unescape(text)
+    text = unescape(text).replace("\x00", " ")
     text = re.sub(r"\s+", " ", text).strip()
     text = text.strip(" \t\r\n:：|｜-—")
+    return to_traditional(text) if text else None
+
+
+def clean_description(text: str | None) -> str | None:
+    """Clean a book description without flattening meaningful line breaks."""
+    if not text:
+        return None
+    text = unescape(text).replace("\x00", " ").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [re.sub(r"[\t\f\v ]+", " ", line).strip() for line in text.split("\n")]
+    text = "\n".join(lines).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text).strip(" \t\r\n:：|｜-—")
     return to_traditional(text) if text else None
 
 
@@ -98,8 +109,16 @@ def clean_title(text: str | None) -> str | None:
 
 PUBLISHER_ALIASES = {
     "聯經出版公司": "聯經出版",
+    "聯經出版事業股份有限公司": "聯經出版",
+    "聯經出版社": "聯經出版",
+    "聯經": "聯經出版",
     "東立出版社": "東立出版",
     "東立": "東立出版",
+    "麥田": "麥田出版",
+    "城邦出版集團 麥田": "麥田出版",
+    "英屬維京群島商高寶國際有限公司台灣分公司": "高寶",
+    "英屬維京群島商高寶國際有限公司臺灣分公司": "高寶",
+    "高寶書版": "高寶",
 }
 
 
@@ -124,6 +143,7 @@ def split_people(value: str | Iterable[str] | None) -> list[str]:
             continue
         item = re.sub(r"^(作者|作家|譯者|译者|繪者|绘者)\s*[:：]\s*", "", item)
         item = re.sub(r"[_｜|]\s*(愛下電子書|爱下电子书|Readmoo|博客來|誠品線上|Kobo|Pubu)$", "", item, flags=re.I)
+        item = re.sub(r"\s*[·．・‧]\s*", "．", item)
         item = clean_text(item)
         if item and item not in people:
             people.append(item)
@@ -134,7 +154,9 @@ def normalize_isbn(value: str | None) -> str | None:
     if not value:
         return None
     value = re.sub(r"[^0-9Xx]", "", value)
-    if len(value) in {10, 13}:
+    if len(value) == 13 and value.isdigit() and value.startswith(("978", "979")):
+        return value
+    if re.fullmatch(r"[0-9]{9}[0-9Xx]", value):
         return value.upper()
     return None
 

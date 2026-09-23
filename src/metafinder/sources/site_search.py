@@ -7,7 +7,7 @@ from urllib.parse import quote_plus, urlencode, urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from metafinder.models import BookCandidate, BookMetadata
-from metafinder.normalize import clean_title, normalize_isbn, split_people
+from metafinder.normalize import clean_title, normalize_isbn, split_people, to_simplified_for_search
 from metafinder.source_rules import BOOK_URL_PATTERNS as BOOK_URL_PATTERN_TEXTS
 from metafinder.sources.web_search import USER_AGENT, polite_get
 
@@ -29,7 +29,9 @@ BOOK_URL_PATTERNS = [re.compile(pattern) for pattern in BOOK_URL_PATTERN_TEXTS]
 
 
 def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0, stop_after_first_hit: bool = False) -> list[str]:
-    urls: list[str] = []
+    urls = _search_sanmin(query, timeout, limit)
+    if len(urls) >= limit or (stop_after_first_hit and urls):
+        return urls
     for href in _search_tdtb_library(query, timeout=timeout):
         if href not in urls:
             urls.append(href)
@@ -52,6 +54,15 @@ def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0, stop
                 return urls
         if stop_after_first_hit and urls:
             return urls
+    # Qidian is useful for web novels, but its broad CJK search produces
+    # unrelated results for ordinary bookstore titles.  Use it only after the
+    # dedicated bookstore searches had no usable URL.
+    if not urls:
+        for href in _search_qidian_mobile(query, timeout=timeout, limit=limit):
+            if href not in urls:
+                urls.append(href)
+            if len(urls) >= limit:
+                return urls
     return urls
 
 
@@ -139,6 +150,101 @@ def _search_tdtb_library(query: str, timeout: float) -> list[str]:
             if _matches_book_url(href) and href not in urls:
                 urls.append(href)
     return urls
+
+
+def _search_qidian_mobile(query: str, timeout: float, limit: int) -> list[str]:
+    if not re.search(r"[\u3400-\u9fff]", query or ""):
+        return []
+    attempts: list[str] = []
+    cleaned = clean_title(query) or query
+    for value in [cleaned, cleaned.rsplit(maxsplit=1)[0] if " " in cleaned else ""]:
+        value = value.strip()
+        if value and value not in attempts:
+            attempts.append(value)
+
+    urls: list[str] = []
+    for value in attempts:
+        search_url = f"https://m.qidian.com/search?kw={quote_plus(value)}"
+        try:
+            response = polite_get(search_url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+            response.raise_for_status()
+        except Exception:
+            continue
+        soup = BeautifulSoup(response.text, "lxml")
+        query_key = re.sub(r"\W+", "", to_simplified_for_search(value) or value)
+        for link in soup.select("a[data-bid], a[href*='/chapter/']"):
+            title_node = link.select_one("h2, h3, .book-title")
+            title = title_node.get_text(" ", strip=True) if title_node else link.get("title", "")
+            title = re.sub(r"(?:在线阅读|線上閱讀)$", "", title)
+            title_key = re.sub(r"\W+", "", to_simplified_for_search(title) or title)
+            if not title_key or title_key not in query_key:
+                continue
+            bid = link.get("data-bid", "")
+            if not bid.isdigit():
+                match = re.search(r"/chapter/(\d+)/", link.get("href", ""))
+                if not match:
+                    continue
+                bid = match.group(1)
+            href = f"https://m.qidian.com/book/{bid}/"
+            if href not in urls:
+                urls.append(href)
+            if len(urls) >= limit:
+                return urls
+    return urls
+
+
+def _search_sanmin(query: str, timeout: float, limit: int) -> list[str]:
+    volume = re.match(r"^(\d{1,3})\s+", query.strip())
+    value = re.sub(r"^\d{1,3}\s+", "", query.strip())
+    if " " in value and not normalize_isbn(value):
+        value = value.rsplit(maxsplit=1)[0]
+    if not volume:
+        trailing = re.search(r"\s+0*([1-9][0-9]{0,2})$", value)
+        if trailing:
+            volume = trailing
+            value = value[:trailing.start()].strip()
+    if volume:
+        value += f"{int(volume.group(1)):02d}"
+    try:
+        response = polite_get("https://www.sanmin.com.tw/search/index/?ct=K&qu=" + quote_plus(value),
+                              headers={"User-Agent": USER_AGENT}, timeout=timeout)
+        response.raise_for_status()
+    except Exception:
+        return []
+    soup = BeautifulSoup(response.text, "lxml")
+    matches: list[tuple[str, str]] = []
+    expected = re.sub(r"[\W\d]+", "", to_simplified_for_search(value) or value)
+    isbn = normalize_isbn(value)
+    for link in soup.select("a[href*='/product/index/']"):
+        title = re.sub(r"^\d+\.\s*", "", link.get_text(" ", strip=True))
+        actual = re.sub(r"[\W\d]+", "", to_simplified_for_search(title) or title)
+        if not title or (not isbn and (not expected or not actual or not (actual in expected or expected in actual))):
+            continue
+        # ISBN 搜尋只收編號結果列，避免頁首推薦商品。
+        if isbn and not re.match(r"^\d+\.\s*", link.get_text(" ", strip=True)):
+            continue
+        url = urljoin("https://www.sanmin.com.tw", link["href"])
+        if (title, url) not in matches:
+            matches.append((title, url))
+
+    # 三民以新集數優先；先篩同集，避免較舊的目標集被前幾筆結果截掉。
+    if volume:
+        requested_volume = int(volume.group(1))
+        exact = [(title, url) for title, url in matches if _sanmin_title_volume(title) == requested_volume]
+        if exact:
+            matches = exact
+        if "漫畫" not in query:
+            prose = [(title, url) for title, url in matches if "漫畫" not in title]
+            if prose:
+                matches = prose
+    return [url for _, url in matches[:limit]]
+
+
+def _sanmin_title_volume(title: str) -> int | None:
+    """Return the trailing Arabic volume label from a Sanmin result title."""
+
+    match = re.search(r"(?:第\s*)?0*([0-9]{1,3})(?:\s*[（(]|\s*$)", title)
+    return int(match.group(1)) if match else None
 
 
 def _books_result_count(soup: BeautifulSoup) -> int | None:

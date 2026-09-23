@@ -42,3 +42,12 @@ def test_series_evidence_priority_demotes_generic_external_category():
     assert series_evidence_priority("一家都是寶", "title:trailing-volume") > series_evidence_priority(
         "溫馨", "cxyqw-guling"
     )
+def test_trailing_multi_digit_volume_is_not_split_into_series_name():
+    assert_series("百鍊霸王與聖約女武神16", "百鍊霸王與聖約女武神", 16.0)
+    assert_series("百鍊霸王與聖約女武神０６", "百鍊霸王與聖約女武神", 6.0)
+    assert infer_series_from_title("東京1984") is None
+
+
+def test_chinese_juan_volume_strips_juan_and_accepts_final_marker():
+    assert_series("裏八仙 卷三", "裏八仙", 3.0)
+    assert_series("裏八仙 卷四（終）", "裏八仙", 4.0)

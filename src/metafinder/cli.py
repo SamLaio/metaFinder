@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 from pathlib import Path
 
 import requests
@@ -41,12 +42,9 @@ def _prefer_utf8_stdio() -> None:
 
 
 def _search(args: argparse.Namespace) -> int:
-    finder = MetadataFinder(
-        request_timeout=args.request_timeout,
-        max_search_seconds=args.max_search_seconds,
-        max_web_queries=args.max_web_queries,
-    )
-    candidates = finder.search(args.query, limit=args.limit)
+    candidates, timed_out = _bounded_search(args)
+    if timed_out:
+        print(f"查找逾時：已達 {args.max_search_seconds:g} 秒整體上限。", file=sys.stderr)
     if args.json:
         print(json.dumps([c.as_dict() for c in candidates], ensure_ascii=False, indent=2))
     else:
@@ -56,6 +54,33 @@ def _search(args: argparse.Namespace) -> int:
     return 0 if candidates else 1
 
 
+def _bounded_search(args: argparse.Namespace):
+    """Keep the CLI's advertised total search budget even if a source blocks."""
+    result = []
+    errors = []
+
+    def run() -> None:
+        try:
+            finder = MetadataFinder(
+                request_timeout=args.request_timeout,
+                max_search_seconds=args.max_search_seconds,
+                max_web_queries=args.max_web_queries,
+            )
+            result.extend(finder.search(args.query, limit=args.limit))
+        except Exception as exc:
+            errors.append(exc)
+
+    if args.max_search_seconds <= 0:
+        run()
+    else:
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        worker.join(args.max_search_seconds)
+        if worker.is_alive():
+            return [], True
+    if errors:
+        raise errors[0]
+    return result, False
 def _print_table(candidates) -> None:
     if not candidates:
         print("No candidates found.")

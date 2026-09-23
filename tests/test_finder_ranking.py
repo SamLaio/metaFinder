@@ -1,8 +1,9 @@
-from metafinder.finder import MetadataFinder, _candidate_matches_query, _candidate_query_rank, _is_probably_book_page, _query_variants, _site_query_variants, _web_queries
+from metafinder.finder import MetadataFinder, _candidate_matches_any_query_variant, _candidate_matches_query, _candidate_query_rank, _is_probably_book_page, _query_variants, _site_query_variants, _web_queries
 from metafinder.models import BookCandidate, BookMetadata
 from metafinder.sources.generic import GenericPageParser
 from metafinder.sources.site_search import _matches_book_url, _strip_tracking, search_source_candidates
 from metafinder.sources import web_search
+from metafinder.sources.web_search import SearchResult
 
 
 def candidate(title: str, authors: list[str], score: float) -> BookCandidate:
@@ -22,6 +23,74 @@ def test_default_search_budget_is_safe_for_batch_use():
     assert finder.max_search_seconds == 12.0
     assert finder.max_search_seconds < 20
     assert finder.max_web_queries == 4
+
+
+def test_placeholder_identifier_does_not_search_for_an_unrelated_book(monkeypatch):
+    finder = MetadataFinder()
+    monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不應搜尋")))
+
+    assert finder.search("xxxx-xxxx") == []
+
+
+def test_query_variants_strip_trailing_latin_author_alias():
+    assert "集合體 娜塔夏‧ 布朗" in _query_variants("集合體 娜塔夏‧ 布朗（Natasha Brown）")
+
+
+def test_query_variants_strip_trailing_quoted_marketing_blurb():
+    variants = _query_variants("龍與地下鐵（「文字鬼才」馬伯庸大開腦洞之作） 馬伯庸")
+    assert variants[0] == "龍與地下鐵 馬伯庸"
+
+
+def test_query_variants_strip_trailing_series_ordinal_and_keep_author():
+    variants = _query_variants("泥老虎～三人成虎之一 蔡小雀")
+    assert variants[0] == "泥老虎 蔡小雀"
+    assert "泥老虎 蔡小雀" in variants
+
+
+def test_series_ordinal_query_variant_is_used_for_candidate_filtering():
+    found = candidate("泥老虎", ["蔡小雀"], 70)
+    assert _candidate_matches_any_query_variant(found, "泥老虎～三人成虎之一 蔡小雀")
+
+
+def test_author_alias_and_middle_dot_variants_match_candidate():
+    candidate_with_taiwan_name = candidate("集合體", ["娜塔夏．布朗"], 70)
+
+    assert _candidate_matches_query(candidate_with_taiwan_name, "集合體 娜塔夏‧ 布朗（Natasha Brown）")
+
+
+def test_ranking_prefers_a_substantive_description_over_a_truncated_preview():
+    parser = GenericPageParser()
+    common = dict(title="怪島奇譚 2", publisher="蓋亞文化", isbn="9786263843578", cover_url="https://example.invalid/cover.jpg")
+    preview = BookMetadata(**common, description="與島共生，妖異為伴……")
+    full = BookMetadata(**common, description="完整故事簡介。" * 40)
+
+    assert parser._score(full, "store") > parser._score(preview, "store")
+
+
+def test_compact_trailing_volume_matches_spaced_query_volume():
+    compact = candidate("怪島奇譚02", ["張季雅"], 75)
+    spaced = candidate("怪島奇譚 2", ["張季雅"], 70)
+
+    assert _candidate_query_rank(compact, "怪島奇譚 2 張季雅") >= _candidate_query_rank(spaced, "怪島奇譚 2 張季雅")
+
+
+def test_trailing_volume_before_author_rejects_other_volume_candidates():
+    assert _candidate_matches_query(candidate("農林14", ["白鳥士郎"], 75), "農林14 白鳥士郎")
+    assert not _candidate_matches_query(candidate("農林12", ["白鳥士郎"], 75), "農林14 白鳥士郎")
+    assert not _candidate_matches_query(
+        candidate("帶著外掛轉生為公會櫃臺小姐06", ["夏にコタツ"], 75),
+        "帶著外掛轉生為公會櫃台小姐2.5 Fateful Encounter 夏にコタツ",
+    )
+    assert not _candidate_matches_any_query_variant(
+        candidate("農林12", ["白鳥士郎"], 75), "農林14 白鳥士郎"
+    )
+
+
+def test_single_volume_does_not_match_bundle_with_same_count():
+    for title in ("神鵰俠侶(全四冊)", "神鵰俠侶 全4册", "神鵰俠侶 套書"):
+        assert not _candidate_matches_query(candidate(title, ["金庸"], 100), "04 神鵰俠侶 金庸")
+    assert _candidate_matches_query(candidate("神鵰俠侶(4)", ["金庸"], 100), "04 神鵰俠侶 金庸")
+    assert _candidate_matches_query(candidate("神鵰俠侶(全四冊)", ["金庸"], 100), "神鵰俠侶 全四冊")
 
 
 def test_books_requests_are_throttled(monkeypatch):
@@ -91,6 +160,23 @@ def test_store_search_result_is_hydrated_with_product_page_metadata(monkeypatch)
     assert result[0].metadata.tags == ["人文社科"]
 
 
+def test_direct_store_hit_is_parsed_before_slow_query_variants(monkeypatch):
+    detail = BookCandidate(
+        source_name="三民網路書店",
+        source_url="https://www.sanmin.com.tw/product/index/008541880",
+        source_kind="store",
+        metadata=BookMetadata(title="迷宮飯02", authors=["九井諒子"], publisher="青文", series_index=2),
+        score=70,
+    )
+    finder = MetadataFinder(max_search_seconds=3)
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda *args, **kwargs: [detail.source_url])
+    monkeypatch.setattr(finder.parser, "parse_url", lambda *args, **kwargs: detail)
+    monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不應進入慢速變體搜尋")))
+
+    assert finder.search("迷宮飯 02 九井諒子") == [detail]
+
+
 def test_same_product_url_from_store_and_web_search_is_returned_once(monkeypatch):
     detail = BookCandidate(
         source_name="博客來",
@@ -137,6 +223,30 @@ def test_author_only_match_is_not_relevant_for_title_author_query():
     assert not _candidate_matches_query(same_author_other_book, query)
 
 
+def test_web_novel_candidate_must_match_trailing_author_when_title_is_short():
+    query = "02 異形 艾倫．狄恩．佛斯特"
+    wrong_web_novel = BookCandidate(
+        source_name="起點中文網",
+        source_url="https://m.qidian.com/book/1046552678/",
+        source_kind="web-novel",
+        metadata=BookMetadata(title="異形", authors=["作者不符"]),
+        score=70,
+    )
+
+    assert not _candidate_matches_query(wrong_web_novel, query)
+
+
+def test_store_candidate_must_match_trailing_author():
+    wrong_book = candidate("第一次寫劇本就上手", ["衣笠竜屯"], 63)
+    wrong_edition = candidate("精靈幻想記02", ["みなづきふたご"], 73)
+    manga = candidate("精靈幻想記02", ["北山結莉-原作；みなづきふたご-漫畫"], 73)
+    manga.metadata.tags = ["漫畫"]
+
+    assert not _candidate_matches_query(wrong_book, "第一次寫Linux Driver就上手 JOJO")
+    assert not _candidate_matches_query(wrong_edition, "02 精靈幻想記 精靈的祝福 北山結莉")
+    assert not _candidate_matches_query(manga, "02 精靈幻想記 精靈的祝福 北山結莉")
+
+
 def test_same_author_and_volume_number_only_is_not_relevant():
     query = "滅亡後的世界06 sing N song"
     same_author_same_volume_other_series = candidate("全知讀者視角06 - sing N song", ["sing N song"], 69)
@@ -156,6 +266,13 @@ def test_short_title_wrong_same_author_book_is_not_relevant():
     same_author_other_book = candidate("血色大地：夾在希特勒與史達林之間的東歐 - 提摩希．史奈德", ["提摩希．史奈德"], 81)
 
     assert not _candidate_matches_query(same_author_other_book, query)
+
+
+def test_parenthetical_referenced_book_title_does_not_match_query():
+    query = "賈伯斯傳 華特．艾薩克森"
+    referenced = candidate("班傑明．富蘭克林：美國心靈的原型（《賈伯斯傳》作者經典鉅作）", ["華特．艾薩克森"], 80)
+
+    assert not _candidate_matches_query(referenced, query)
 
 
 def test_shared_number_and_generic_title_tokens_are_not_enough():
@@ -295,6 +412,7 @@ def test_site_query_variants_prioritize_bilingual_volume_variants():
     query = "01 OUTBREAK COMPANY 萌萌侵略者 榊一郎"
     variants = _site_query_variants(query, _query_variants(query), 8)
 
+    assert variants[0] == query
     assert "萌萌侵略者 OUTBREAK COMPANY 榊一郎" in variants
     assert "萌萌侵略者OUTBREAK COMPANY(01) 榊一郎" in variants
 
@@ -320,6 +438,20 @@ def test_leading_volume_query_rejects_different_candidate_volume():
     assert _candidate_matches_query(volume_2, query)
     assert not _candidate_matches_query(volume_3, query)
     assert _candidate_query_rank(volume_2, query) > _candidate_query_rank(volume_3, query)
+
+
+def test_leading_volume_query_rejects_missing_or_attached_wrong_volume():
+    query = "09 福爾摩斯．新探案(自炊) 柯南．道爾"
+
+    assert not _candidate_matches_query(candidate("新探案", ["柯南．道爾"], 74), query)
+    assert not _candidate_matches_query(candidate("福爾摩斯探案全集8：新探案", ["柯南．道爾"], 77), query)
+
+
+def test_single_title_query_rejects_ampersand_compilation():
+    query = "01 福爾摩斯．血字的研究(自炊) 柯南．道爾"
+    compilation = candidate("福爾摩斯探案全集1：血字的研究＆四簽名", ["柯南．道爾"], 77)
+
+    assert not _candidate_matches_query(compilation, query)
 
 
 def test_leading_volume_query_rejects_parenthesized_wrong_volume():
@@ -353,6 +485,12 @@ def test_isbn_web_queries_are_bounded_and_skip_title_author_hints():
         "9789863842590 site:eslite.com",
     ]
     assert not any("jjwxc" in query or "晉江" in query for query in queries)
+
+
+def test_general_web_queries_include_tongli_as_official_publisher_source():
+    queries = _web_queries(["異世界料理道 EDA"], max_queries=30)
+
+    assert "異世界料理道 EDA site:tongli.com.tw" in queries
 
 
 def test_isbn_search_returns_empty_when_no_candidate_matches_expected_isbn(monkeypatch):
@@ -392,6 +530,19 @@ def test_collect_urls_stops_when_deadline_is_expired(monkeypatch):
     assert calls == []
 
 
+def test_isbn_store_candidate_returns_before_slow_optional_discovery(monkeypatch):
+    exact = candidate("迷宮飯(01)", ["九井諒子"], 50)
+    exact.metadata.isbn = "9789865127558"
+    finder = MetadataFinder(max_search_seconds=1)
+
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [exact])
+    monkeypatch.setattr(finder, "_hydrate_source_candidate", lambda candidates, *args: candidates)
+    monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不應繼續慢查")))
+    monkeypatch.setattr("metafinder.finder.lookup_openlibrary_isbn", lambda *args, **kwargs: None)
+
+    assert finder.search("9789865127558") == [exact]
+
+
 def test_collect_urls_caps_source_site_results_before_web_search(monkeypatch):
     site_calls: list[str] = []
 
@@ -406,6 +557,51 @@ def test_collect_urls_caps_source_site_results_before_web_search(monkeypatch):
 
     assert len(urls) == 12
     assert len(site_calls) < len(_query_variants("01 86-不存在的戰區 安里アサト"))
+
+
+def test_collect_urls_keeps_web_fallback_after_source_urls(monkeypatch):
+    monkeypatch.setattr(
+        "metafinder.finder.search_source_sites",
+        lambda *args, **kwargs: ["https://www.sanmin.com.tw/product/index/noise"],
+    )
+    calls = []
+
+    def web_search(query, limit, timeout):
+        calls.append(query)
+        return [SearchResult("高年級實習生", "https://www.books.com.tw/products/0010946554")]
+
+    monkeypatch.setattr("metafinder.finder.search_web", web_search)
+    urls = MetadataFinder(per_query_results=1, max_web_queries=1)._collect_urls("高年級實習生")
+
+    assert calls == ["高年級實習生"]
+    assert "https://www.books.com.tw/products/0010946554" in urls
+
+
+def test_search_keeps_matching_store_link_when_product_page_is_blocked(monkeypatch):
+    finder = MetadataFinder()
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: ["https://www.books.com.tw/products/0010946554"])
+    monkeypatch.setattr(finder.parser, "parse_url", lambda *args, **kwargs: BookCandidate(
+        "博客來", "https://www.books.com.tw/products/0010946554", "store", BookMetadata(), 0,
+    ))
+    monkeypatch.setattr(
+        "metafinder.finder.search_web",
+        lambda *args, **kwargs: [SearchResult("高年級實習生：馬里亞納海溝跳島記 - 博客來", "https://www.books.com.tw/products/0010946554")],
+    )
+
+    result = finder.search("高年級實習生")
+
+    assert result[0].metadata.title == "高年級實習生：馬裡亞納海溝跳島記"
+    assert result[0].evidence == ["web-search-result"]
+
+
+def test_title_prefix_matches_a_store_subtitle():
+    candidate = BookCandidate(
+        "博客來", "https://www.books.com.tw/products/0010946554", "store",
+        BookMetadata(title="高年級實習生：馬里亞納海溝跳島記"), 18,
+    )
+
+    assert _candidate_matches_query(candidate, "高年級實習生")
 
 
 def test_collect_urls_limits_source_site_volume_variants_when_no_urls(monkeypatch):
@@ -475,7 +671,7 @@ def test_books_unique_search_result_builds_candidate(monkeypatch):
 
     assert len(candidates) == 1
     assert candidates[0].metadata.title == "21世紀的21位思想家"
-    assert candidates[0].metadata.authors == ["（澳）麥肯齊·沃克"]
+    assert candidates[0].metadata.authors == ["（澳）麥肯齊．沃克"]
     assert candidates[0].metadata.isbn == "9787532182978"
     assert candidates[0].source_url == "https://www.books.com.tw/products/CN11861294"
 
@@ -642,6 +838,23 @@ def test_pubu_product_page_strips_description_prefix_and_reads_fields():
     assert "pubu-page" in candidate.evidence
 
 
+def test_readmoo_product_page_prefers_full_description_panel():
+    html = """
+    <html><head>
+      <meta name="description" content="這是遭截斷的商品摘要..." />
+    </head><body>
+      <div class="book-description-container"><div class="book-description">
+        <p>這是商品頁實際完整的內容簡介。</p><p>應優先取代遭截斷的頁面摘要。</p>
+      </div></div>
+    </body></html>
+    """
+
+    candidate = GenericPageParser().parse_html("https://readmoo.com/book/210297089000101", html)
+
+    assert candidate.metadata.description == "這是商品頁實際完整的內容簡介。\n應優先取代遭截斷的頁面摘要。"
+    assert "readmoo-description-panel" in candidate.evidence
+
+
 def test_json_ld_cjk_authors_split_ascii_comma():
     html = """
     <html><head>
@@ -802,3 +1015,18 @@ def test_video_anime_pages_are_not_probably_book_pages():
 
 def test_wikipedia_pages_are_not_automatic_book_candidates():
     assert not _is_probably_book_page("https://zh.wikipedia.org/zh-tw/86%EF%BC%8D%E4%B8%8D%E5%AD%98%E5%9C%A8%E7%9A%84%E6%88%B0%E5%8D%80%EF%BC%8D")
+def test_search_reserves_time_to_parse_collected_urls(monkeypatch):
+    clock = [0.0]
+    finder = MetadataFinder(max_search_seconds=12, request_timeout=3)
+    book = candidate("目標書名", ["作者"], 80)
+    book.source_kind = "store"
+    monkeypatch.setattr("metafinder.finder.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [])
+
+    def collect(*args, **kwargs):
+        clock[0] = kwargs["deadline"]
+        return [book.source_url]
+
+    monkeypatch.setattr(finder, "_collect_urls", collect)
+    monkeypatch.setattr(finder.parser, "parse_url", lambda *args, **kwargs: book)
+    assert finder.search("目標書名 作者") == [book]

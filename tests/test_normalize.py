@@ -1,4 +1,5 @@
 from metafinder.normalize import (
+    clean_description,
     clean_text,
     normalize_isbn,
     normalize_publisher,
@@ -8,6 +9,7 @@ from metafinder.normalize import (
 )
 from metafinder.models import BookMetadata
 from metafinder.tags import (
+    author_region_tags,
     apply_awards_to_tags,
     detect_awards,
     infer_awards_from_trusted_record,
@@ -17,6 +19,15 @@ from metafinder.tags import (
 
 def test_normalize_isbn():
     assert normalize_isbn("ISBN：978-626-315-175-8") == "9786263151758"
+    assert normalize_isbn("4717702110444") is None
+    assert normalize_isbn("1230004974352") is None
+    assert normalize_isbn("978626315175X") is None
+    assert normalize_isbn("9577417477") == "9577417477"
+
+
+def test_linking_publisher_company_aliases():
+    for name in ("聯經出版事業股份有限公司", "聯經出版社", "聯經"):
+        assert normalize_publisher(name) == "聯經出版"
 
 
 def test_split_people():
@@ -29,6 +40,14 @@ def test_short_tags():
 
 def test_clean_text_decodes_html_entities():
     assert clean_text("&#x6211;&#x7368;&#x81EA;&#x5347;&#x7D1A;") == "我獨自升級"
+    assert clean_text("Head\x00First") == "Head First"
+
+
+def test_split_people_normalizes_middle_dot_for_chinese_author_names():
+    assert split_people("戴維·王") == ["戴維．王"]
+    assert split_people("羅蘭・巴特") == ["羅蘭．巴特"]
+    assert split_people("夏洛特‧亨利") == ["夏洛特．亨利"]
+    assert split_people("J · W · 奧克") == ["J．W．奧克"]
 
 
 def test_custom_replacements_apply_after_opencc():
@@ -41,6 +60,8 @@ def test_normalize_publisher_aliases_match_calibre_db():
     assert normalize_publisher("聯經出版公司") == "聯經出版"
     assert normalize_publisher("東立出版社") == "東立出版"
     assert normalize_publisher("東立") == "東立出版"
+    assert normalize_publisher("城邦出版集團 麥田") == "麥田出版"
+    assert normalize_publisher("英屬維京群島商高寶國際有限公司台灣分公司") == "高寶"
 
 
 def test_volume_title_from_trailing_number():
@@ -67,6 +88,10 @@ def test_infer_tags_from_metadata_text():
     assert "小說" in result.tags
 
 
+def test_clean_description_preserves_paragraph_breaks():
+    assert clean_description("第一段\n\n第二段\r\n第三段") == "第一段\n\n第二段\n第三段"
+
+
 def test_region_tags_do_not_come_from_description_places():
     meta = BookMetadata(description="故事橫跨美國、英國與義大利，是一部懸疑小說。")
     result = infer_tags(meta)
@@ -75,6 +100,21 @@ def test_region_tags_do_not_come_from_description_places():
     assert "義大利" not in result.tags
     assert "懸疑" in result.tags
     assert "小說" in result.tags
+
+
+def test_infer_portugal_region_from_source_tags():
+    meta = BookMetadata(tags=["葡萄牙"], description="諾貝爾文學獎得主的小說。")
+    result = infer_tags(meta)
+    assert "葡萄牙" in result.tags
+    assert "小說" in result.tags
+
+
+def test_author_region_tags_use_confirmed_names_and_unambiguous_scripts():
+    assert author_region_tags(["棚架ユウ", "김영하", "王小明"]) == ["日本", "韓國"]
+    assert author_region_tags(["原作：貞本義行"]) == ["日本"]
+    assert author_region_tags(["岡田和人"]) == ["日本"]
+    assert author_region_tags(["蔡小雀", "陳鴻圖", "藤井太洋"]) == ["臺灣", "日本"]
+    assert "美國" in infer_tags(BookMetadata(authors=["娥蘇拉．勒瑰恩"])).tags
 
 
 def test_region_tags_do_not_come_from_local_publisher():
@@ -119,6 +159,11 @@ def test_bare_bl_from_store_chrome_does_not_become_tag():
     result = infer_tags(meta)
     assert "漫畫" in result.tags
     assert "BL" not in result.tags
+
+
+def test_incidental_military_word_does_not_create_military_tag():
+    result = infer_tags(BookMetadata(description="中秋烤肉萬家香，卻有軍事狂兔下凡來炸場。"))
+    assert "軍事" not in result.tags
 
 
 def test_awards_require_current_source_to_be_trusted_record():
