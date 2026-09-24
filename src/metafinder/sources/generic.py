@@ -255,7 +255,8 @@ class GenericPageParser:
                 metadata.authors = split_people(author_match.group(1))
                 found = True
         if not metadata.publisher:
-            metadata.publisher = "晉江文學城"
+            # 網路連載頁的站台不是出版社；書庫以網版標示出版資訊缺省。
+            metadata.publisher = "網版"
             found = True
 
         description = _jjwxc_description(text)
@@ -278,6 +279,42 @@ class GenericPageParser:
 
         if found:
             evidence.append("jjwxc-page")
+
+    def _patch_kadokawa(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
+        host = urlparse(url).netloc.lower()
+        if not (host == "kadokawa.co.jp" or host.endswith(".kadokawa.co.jp")):
+            return
+
+        lines = [clean_text(line) for line in soup.get_text("\n", strip=True).splitlines()]
+        lines = [line for line in lines if line]
+        found = False
+        if not metadata.publisher:
+            metadata.publisher = "KADOKAWA"
+            found = True
+        if not metadata.authors:
+            author = _kadokawa_following_value(lines, "著者")
+            if author:
+                metadata.authors = split_people(author)
+                found = True
+        if not metadata.published_date:
+            date = _kadokawa_following_value(lines, "発売日")
+            if date:
+                metadata.published_date = date
+                found = True
+        if not metadata.isbn:
+            isbn = _kadokawa_following_value(lines, "ISBN")
+            if isbn:
+                metadata.isbn = normalize_isbn(isbn)
+                found = True
+        description = _kadokawa_description(lines)
+        if description and (not metadata.description or metadata.description.startswith("ライトノベル「")):
+            metadata.description = description
+            found = True
+        if metadata.title and re.search(r"[\u3040-\u30ff]", metadata.title):
+            metadata.tags = short_tags([*metadata.tags, "原文"])
+            found = True
+        if found:
+            evidence.append("kadokawa-page")
 
     def _patch_pubu(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         host = urlparse(url).netloc.lower()
@@ -611,6 +648,30 @@ def _pubu_visible_field(soup: BeautifulSoup, label: str) -> str | None:
     for index, line in enumerate(lines[:-1]):
         if line == label:
             return lines[index + 1]
+    return None
+
+
+def _kadokawa_following_value(lines: list[str], label: str) -> str | None:
+    for index, line in enumerate(lines):
+        if line == label and index + 1 < len(lines):
+            return lines[index + 1]
+    return None
+
+
+def _kadokawa_description(lines: list[str]) -> str | None:
+    starts = [index + 2 for index, line in enumerate(lines) if line == "ISBN"]
+    for start in reversed(starts):
+        parts: list[str] = []
+        for line in lines[start:]:
+            if line.startswith(("※", "紙書籍", "発売情報", "電子版を購入")):
+                break
+            if len(line) >= 12 and line not in parts:
+                parts.append(line)
+            if len(parts) >= 3:
+                break
+        description = clean_description("\n".join(parts))
+        if description:
+            return description
     return None
 
 

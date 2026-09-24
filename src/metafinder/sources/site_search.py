@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import quote_plus, urlencode, urljoin, urlparse
 
+import requests
 from bs4 import BeautifulSoup
 
 from metafinder.models import BookCandidate, BookMetadata
@@ -29,6 +30,9 @@ BOOK_URL_PATTERNS = [re.compile(pattern) for pattern in BOOK_URL_PATTERN_TEXTS]
 
 
 def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0, stop_after_first_hit: bool = False) -> list[str]:
+    if _is_kadokawa_query(query):
+        return _search_kadokawa(query, timeout, limit)
+
     urls = _search_sanmin(query, timeout, limit)
     if len(urls) >= limit or (stop_after_first_hit and urls):
         return urls
@@ -64,6 +68,70 @@ def search_source_sites(query: str, limit: int = 12, timeout: float = 15.0, stop
             if len(urls) >= limit:
                 return urls
     return urls
+
+
+def _is_kadokawa_query(query: str) -> bool:
+    return "カドカワBOOKS" in query or "kadokawa" in query.lower()
+
+
+def _search_kadokawa(query: str, timeout: float, limit: int) -> list[str]:
+    """Use KADOKAWA's JSON search endpoint for explicitly marked imprints."""
+
+    title = re.sub(r"\s*[（(](?:カドカワBOOKS|KADOKAWA)[)）].*$", "", query, flags=re.IGNORECASE).strip()
+    if not title:
+        return []
+    data = {
+        "pageno": "1",
+        "pageno_book": "1",
+        "pageno_media": "1",
+        # 先取一頁再按冊次／媒體類型排序，不能把呼叫端筆數直接交給站方截斷。
+        "size": "20",
+        "itemIdKbn": "",
+        "item_type": "",
+        "kw": title,
+    }
+    try:
+        response = requests.post(
+            "https://www.kadokawa.co.jp/product/search/",
+            data=data,
+            headers={"User-Agent": USER_AGENT, "X-Requested-With": "XMLHttpRequest"},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        results = response.json().get("result", {})
+    except Exception:
+        return []
+
+    items = results.get("book", results.get("all", []))
+    requested_volume = _kadokawa_query_volume(query)
+    is_kadokawa_books = "カドカワBOOKS" in query
+    if requested_volume is not None:
+        items = sorted(
+            items,
+            key=lambda item: (
+                _kadokawa_result_volume(str(item.get("title", ""))) != requested_volume,
+                is_kadokawa_books and item.get("subgenre_name") == "コミックス",
+            ),
+        )
+
+    urls: list[str] = []
+    for item in items:
+        item_code = str(item.get("itemCode", ""))
+        if item_code.isdigit():
+            urls.append(f"https://www.kadokawa.co.jp/product/{item_code}/")
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def _kadokawa_query_volume(query: str) -> int | None:
+    match = re.search(r"[\s　]([0-9０-９]{1,3})\s*[（(](?:カドカワBOOKS|KADOKAWA)[)）]", query, re.IGNORECASE)
+    return int(match.group(1).translate(str.maketrans("０１２３４５６７８９", "0123456789"))) if match else None
+
+
+def _kadokawa_result_volume(title: str) -> int | None:
+    match = re.search(r"[\s　]([0-9０-９]{1,3})\s*$", title)
+    return int(match.group(1).translate(str.maketrans("０１２３４５６７８９", "0123456789"))) if match else None
 
 
 def search_source_candidates(query: str, limit: int = 3, timeout: float = 15.0, expected_isbn: str | None = None) -> list[BookCandidate]:

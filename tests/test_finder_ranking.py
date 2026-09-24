@@ -375,6 +375,45 @@ def test_limited_web_search_prioritizes_store_sources_before_web_novel_hints():
     assert queries == ["遠野物語 柳田國男", "遠野物語 柳田國男 site:books.com.tw"]
 
 
+def test_kadokawa_imprint_query_reserves_official_search_slot():
+    query = "水魔法ぐらいしか取り柄がないけど現代知識があれば充分だよね？ ２ (カドカワBOOKS) mono-zo"
+
+    queries = _web_queries([query], max_queries=2)
+
+    assert queries == [query, query + " site:kadokawa.co.jp"]
+
+
+def test_kadokawa_imprint_uses_source_search(monkeypatch):
+    site_queries: list[str] = []
+    web_queries: list[str] = []
+
+    monkeypatch.setattr(
+        "metafinder.finder.search_source_sites",
+        lambda query, limit, timeout, stop_after_first_hit=False: site_queries.append(query) or [],
+    )
+    monkeypatch.setattr(
+        "metafinder.finder.search_web",
+        lambda query, limit, timeout: web_queries.append(query) or [],
+    )
+    query = "水魔法ぐらいしか取り柄がないけど現代知識があれば充分だよね？ ２ (カドカワBOOKS) mono-zo"
+
+    MetadataFinder(per_query_results=1, max_web_queries=2)._collect_urls(query)
+
+    assert query in site_queries
+    assert query + " site:kadokawa.co.jp" in web_queries
+
+
+def test_kadokawa_imprint_skips_generic_store_cards(monkeypatch):
+    monkeypatch.setattr(
+        "metafinder.finder.search_source_candidates",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不應查泛用書店卡")),
+    )
+    monkeypatch.setattr("metafinder.finder.search_source_sites", lambda *args, **kwargs: [])
+    monkeypatch.setattr("metafinder.finder.search_web", lambda *args, **kwargs: [])
+
+    assert MetadataFinder(max_web_queries=0).search("水魔法 ２ (カドカワBOOKS) mono-zo") == []
+
+
 def test_collect_urls_searches_with_fanqie_query_hints(monkeypatch):
     queries: list[str] = []
 

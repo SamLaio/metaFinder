@@ -65,7 +65,8 @@ class MetadataFinder:
             if openlibrary:
                 candidates.append(openlibrary)
         if not direct_url:
-            source_candidates = search_source_candidates(
+            # 明示官方書系時，泛用書店卡可能先命中同名改編版。
+            source_candidates = [] if _is_kadokawa_query(query) else search_source_candidates(
                 query,
                 limit=3,
                 timeout=min(_request_timeout(self.request_timeout, deadline), 2.0),
@@ -508,8 +509,12 @@ def _web_queries(query_variants: list[str], expected_isbn: str | None = None, ma
             queries.append(variant)
             queries.extend(f"{variant} {source}" for source in preferred_sources)
         return queries[:max_queries]
+    has_kadokawa_imprint = any("カドカワBOOKS" in variant or "kadokawa" in variant.lower() for variant in query_variants)
     for variant in query_variants:
         queries.append(variant)
+        # 書名明示 KADOKAWA 書系時，優先保留官方頁配額，避免被網文提示或變體耗盡。
+        if has_kadokawa_imprint:
+            queries.append(f"{variant} site:kadokawa.co.jp")
     if max_queries <= 4:
         # Batch mode commonly allows only two queries.  Use its remaining
         # budget on a trustworthy store instead of a niche web-novel hint.
@@ -539,6 +544,10 @@ def _request_timeout(default: float, deadline: float | None) -> float:
     if deadline is None:
         return default
     return max(0.1, min(default, _remaining_seconds(deadline)))
+
+
+def _is_kadokawa_query(query: str) -> bool:
+    return "カドカワBOOKS" in query or "kadokawa" in query.lower()
 
 
 def _looks_like_url(value: str) -> bool:

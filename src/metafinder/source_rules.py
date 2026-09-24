@@ -16,6 +16,7 @@ class SourceRule:
 SOURCE_RULES = (
     SourceRule(("ching-win.com.tw",), "青文出版社", "publisher", ("https?://(?:www\\.)?ching-win\\.com\\.tw/product-detail/[A-Za-z0-9_-]+",)),
     SourceRule(("crown.com.tw",), "皇冠文化", "publisher", ("https?://(?:www\\.)?crown\\.com\\.tw/view\\.aspx\\?bc=[0-9A-Za-z_-]+",)),
+    SourceRule(("kadokawa.co.jp",), "KADOKAWA", "publisher", ("https?://(?:www\\.)?kadokawa\\.co\\.jp/product/\\d+/?",), patch="kadokawa"),
     SourceRule(("cite.com.tw",), "城邦讀書花園", "publisher", ("https?://(?:www\\.)?cite\\.com\\.tw/book\\?id=[0-9A-Za-z_-]+",)),
     SourceRule(("books.com.tw",), "博客來", "store", ("https?://(?:www\\.)?books\\.com\\.tw/products/[A-Za-z0-9]+",)),
     SourceRule(("readmoo.com",), "Readmoo", "store", ("https?://readmoo\\.com/book/[0-9A-Za-z]+",), patch="readmoo"),

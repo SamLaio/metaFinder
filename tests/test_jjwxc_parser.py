@@ -16,7 +16,7 @@ def test_jjwxc_patch_cleans_wrapped_title_author_and_cover():
     assert candidate.source_name == "晉江文學城"
     assert candidate.metadata.title == "賣臉花瓶是機甲大神"
     assert candidate.metadata.authors == ["逢行"]
-    assert candidate.metadata.publisher == "晉江文學城"
+    assert candidate.metadata.publisher == "網版"
     assert candidate.metadata.cover_url == "https://pic1.imgdb.cn/item/6808e4df58cb8da5c8c6a495.jpg"
     assert "jjwxc-page" in candidate.evidence
 
