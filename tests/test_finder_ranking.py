@@ -131,7 +131,12 @@ def test_store_search_result_is_hydrated_with_product_page_metadata(monkeypatch)
         source_name="博客來",
         source_url="https://www.books.com.tw/products/0010767953",
         source_kind="store",
-        metadata=BookMetadata(title="世界史聞不出的藥水味", authors=["譚健鍬"]),
+        metadata=BookMetadata(
+            title="世界史聞不出的藥水味",
+            authors=["譚健鍬"],
+            isbn="9789571371801",
+            cover_url="https://example.test/cover.jpg",
+        ),
         score=42,
         evidence=["books-search-result"],
     )
@@ -150,6 +155,7 @@ def test_store_search_result_is_hydrated_with_product_page_metadata(monkeypatch)
         evidence=["json-ld", "meta-tags"],
     )
     finder = MetadataFinder(max_search_seconds=3)
+    monkeypatch.setattr("metafinder.finder.lookup_openlibrary_isbn", lambda *args, **kwargs: None)
     monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [summary])
     monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: [])
     monkeypatch.setattr(finder.parser, "parse_url", lambda *args, **kwargs: detail)
@@ -158,6 +164,45 @@ def test_store_search_result_is_hydrated_with_product_page_metadata(monkeypatch)
 
     assert result == [detail]
     assert result[0].metadata.tags == ["人文社科"]
+    assert result[0].metadata.publisher == "時報出版"
+
+
+def test_isbn_search_card_continues_to_product_detail_sources(monkeypatch):
+    summary = BookCandidate(
+        source_name="博客來",
+        source_url="https://www.books.com.tw/products/0010767953",
+        source_kind="store",
+        metadata=BookMetadata(title="世界史聞不出的藥水味", isbn="9789571371801"),
+        score=42,
+        evidence=["books-search-result"],
+    )
+    detail = BookCandidate(
+        source_name="三民網路書店",
+        source_url="https://www.sanmin.com.tw/product/index/0010767953",
+        source_kind="store",
+        metadata=BookMetadata(
+            title="世界史聞不出的藥水味：那些外國名人的生老病死",
+            authors=["譚健鍬"],
+            isbn="9789571371801",
+            publisher="時報出版",
+        ),
+        score=70,
+        evidence=["sanmin-page"],
+    )
+    finder = MetadataFinder(max_search_seconds=3)
+    monkeypatch.setattr("metafinder.finder.lookup_openlibrary_isbn", lambda *args, **kwargs: None)
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [summary])
+    monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: [detail.source_url])
+    monkeypatch.setattr(
+        finder.parser,
+        "parse_url",
+        lambda url, **kwargs: summary if url == summary.source_url else detail,
+    )
+
+    result = finder.search("9789571371801")
+
+    assert detail in result
+    assert next(candidate for candidate in result if candidate.source_url == detail.source_url).metadata.publisher == "時報出版"
 
 
 def test_direct_store_hit_is_parsed_before_slow_query_variants(monkeypatch):

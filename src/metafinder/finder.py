@@ -77,10 +77,14 @@ class MetadataFinder:
                 if candidates:
                     candidates.sort(key=lambda c: (_candidate_query_rank_any_variant(c, query), c.score), reverse=True)
                     return candidates[:limit]
-            # A store result from an ISBN query carries the exact identifier.
-            # Keep it rather than letting slower optional discovery exhaust the
-            # CLI-wide budget and discard an already verified candidate.
-            if expected_isbn and any(expected_isbn in {c.metadata.isbn, c.metadata.eisbn} for c in candidates):
+            # Only a product detail page has enough evidence to end an ISBN
+            # lookup. Search cards often carry an ISBN and cover but omit the
+            # publisher, date, translators, description and tags.
+            if expected_isbn and any(
+                expected_isbn in {c.metadata.isbn, c.metadata.eisbn}
+                and not any(item.endswith("-search-result") for item in c.evidence)
+                for c in candidates
+            ):
                 candidates.sort(key=lambda c: (_candidate_query_rank_any_variant(c, query), c.score), reverse=True)
                 return candidates[:limit]
         collection_deadline = deadline
@@ -190,7 +194,9 @@ class MetadataFinder:
         if not candidates or _deadline_expired(deadline):
             return candidates
         first = candidates[0]
-        if first.source_kind != "store" or first.metadata.completeness_score() >= 5:
+        # 搜尋卡片即使已有 ISBN 與封面，也不含商品詳頁的出版資料。
+        is_search_result = any(item.endswith("-search-result") for item in first.evidence)
+        if first.source_kind != "store" or (first.metadata.completeness_score() >= 5 and not is_search_result):
             return candidates
         parser_timeout = self.parser.timeout
         try:
