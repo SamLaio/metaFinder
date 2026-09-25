@@ -74,7 +74,7 @@ class MetadataFinder:
             )
             candidates.extend(self._hydrate_source_candidate(source_candidates, query, expected_isbn, deadline))
             if not candidates and not expected_isbn:
-                candidates.extend(self._first_matching_site_candidates(query, expected_isbn, deadline))
+                candidates.extend(self._first_matching_site_candidates(_query_variants(query)[0], expected_isbn, deadline))
                 if candidates:
                     candidates.sort(key=lambda c: (_candidate_query_rank_any_variant(c, query), c.score), reverse=True)
                     return candidates[:limit]
@@ -260,6 +260,7 @@ class MetadataFinder:
 def _query_variants(query: str) -> list[str]:
     variants = []
     for value in [
+        *_trailing_creator_role_variants(query),
         *_trailing_series_ordinal_variants(query),
         *_trailing_promotional_parenthetical_variants(query),
         query,
@@ -277,6 +278,12 @@ def _query_variants(query: str) -> list[str]:
                 if simplified and simplified not in variants:
                     variants.append(simplified)
     return variants
+
+
+def _trailing_creator_role_variants(query: str) -> list[str]:
+    """Remove imported author-role suffixes that stores do not index."""
+    value = re.sub(r"\s+(?:著|譯|译|繪|绘)(?:\s*[；;].*|\s*)$", "", query).strip()
+    return [value] if value and value != query else []
 
 
 def _trailing_promotional_parenthetical_variants(query: str) -> list[str]:

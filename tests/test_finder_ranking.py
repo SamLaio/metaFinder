@@ -36,6 +36,25 @@ def test_query_variants_strip_trailing_latin_author_alias():
     assert "集合體 娜塔夏‧ 布朗" in _query_variants("集合體 娜塔夏‧ 布朗（Natasha Brown）")
 
 
+def test_query_variants_strip_imported_creator_roles():
+    variants = _query_variants("墨水戰爭1：盜書密令 瑞秋．肯恩 著；翁雅如 譯")
+
+    assert variants[0] == "墨水戰爭1：盜書密令 瑞秋．肯恩"
+
+
+def test_fast_site_search_uses_first_normalized_query_variant(monkeypatch):
+    finder = MetadataFinder(max_search_seconds=3)
+    queries = []
+    monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(finder, "_first_matching_site_candidates", lambda query, *_args: queries.append(query) or [])
+    monkeypatch.setattr(finder, "_collect_urls", lambda *args, **kwargs: [])
+    monkeypatch.setattr(finder, "_search_result_fallback", lambda *args, **kwargs: [])
+
+    finder.search("墨水戰爭1：盜書密令 瑞秋．肯恩 著；翁雅如 譯")
+
+    assert queries == ["墨水戰爭1：盜書密令 瑞秋．肯恩"]
+
+
 def test_query_variants_strip_trailing_quoted_marketing_blurb():
     variants = _query_variants("龍與地下鐵（「文字鬼才」馬伯庸大開腦洞之作） 馬伯庸")
     assert variants[0] == "龍與地下鐵 馬伯庸"
