@@ -75,6 +75,8 @@ metafinder-import-replacements D:\path\to\your_words.txt
 
 ISBN 是最穩定的查詢方式。工具會優先採用書店站內搜尋取得的 ISBN／eISBN 精準候選；沒有精準候選時才繼續嘗試其他可信來源。若仍沒有任何精準命中，會回傳空候選，避免混入無關搜尋結果。
 
+已知 ISBN 時，站內搜尋找到第一個可解析的商品頁後會立即進入 ISBN 精確驗證，不會為了蒐集其他站台結果耗盡整體預算；若該頁 ISBN 不符，仍會以 ISBN 精確過濾而不寫回。
+
 ```powershell
 metafinder search "9786263151758"
 metafinder search "9786263151758" --json

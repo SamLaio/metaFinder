@@ -231,7 +231,12 @@ class MetadataFinder:
             if _deadline_expired(deadline):
                 return urls
             timeout = min(_request_timeout(self.request_timeout, deadline), 2.0)
-            for url in search_source_sites(variant, limit=per_variant_limit, timeout=timeout, stop_after_first_hit=False):
+            for url in search_source_sites(
+                variant,
+                limit=per_variant_limit,
+                timeout=timeout,
+                stop_after_first_hit=bool(expected_isbn),
+            ):
                 if url not in urls:
                     urls.append(url)
                 if len(urls) >= source_url_cap:

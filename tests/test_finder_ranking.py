@@ -989,7 +989,7 @@ def test_generic_description_strips_publisher_author_prefix():
     assert "Publisher:" not in candidate.metadata.description
 
 
-def test_isbn_source_search_does_not_stop_after_books(monkeypatch):
+def test_isbn_source_search_stops_after_first_store_hit(monkeypatch):
     calls = []
 
     def fake_search_source_sites(query, limit, timeout, stop_after_first_hit):
@@ -1003,7 +1003,7 @@ def test_isbn_source_search_does_not_stop_after_books(monkeypatch):
     finder = MetadataFinder(max_search_seconds=3, max_web_queries=0)
     finder.search("9786269533831")
 
-    assert calls == [False]
+    assert calls == [True]
 
 
 def test_isbn_search_still_uses_web_queries_after_source_hits(monkeypatch):
