@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from metafinder.models import BookCandidate, BookMetadata
-from metafinder.normalize import clean_description, clean_text, clean_title, normalize_isbn, normalize_publisher, short_tags, split_people
+from metafinder.normalize import clean_description, clean_text, clean_title, extract_labeled_isbns, normalize_isbn, normalize_publisher, short_tags, split_people
 from metafinder.series import infer_series_from_title
 from metafinder.source_rules import source_info as _source_info, source_rule_for_url
 from metafinder.sources.web_search import USER_AGENT, polite_get
@@ -54,7 +54,8 @@ class GenericPageParser:
         query: str | None = None,
         expected_isbn: str | None = None,
     ) -> BookCandidate:
-        soup = BeautifulSoup(html, "lxml")
+        # fetch() 已解碼；避免背景執行緒再次採用頁面舊 charset。
+        soup = BeautifulSoup(html.encode("utf-8"), "lxml", from_encoding="utf-8")
         metadata = BookMetadata()
         evidence: list[str] = []
 
@@ -62,6 +63,18 @@ class GenericPageParser:
         self._apply_site_patch(soup, url, metadata, evidence)
         self._extract_fallback_metadata(soup, url, metadata, evidence)
         self._cleanup(metadata)
+
+        if not urlparse(url).path.strip("/") and not (
+            metadata.authors or metadata.publisher or metadata.isbn or metadata.eisbn
+        ):
+            raise ValueError("網站首頁沒有可核實書籍資料")
+
+        if (
+            urlparse(url).hostname in {"eslite.com", "www.eslite.com"}
+            and re.fullmatch(r"誠品線上\s*[-－|｜]\s*把生活變成喜歡的樣子", metadata.title or "")
+            and not (metadata.authors or metadata.publisher or metadata.isbn or metadata.eisbn)
+        ):
+            raise ValueError("誠品回傳商店首頁，沒有可核實書籍資料")
 
         source_name, source_kind = source_info(url)
         page_text = soup.get_text("\n", strip=True)
@@ -99,6 +112,16 @@ class GenericPageParser:
     def _extract_fallback_metadata(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         self._from_visible_labels(soup, metadata, evidence)
         self._from_images(soup, url, metadata, evidence)
+        if urlparse(url).netloc.lower() in {"crown.com.tw", "www.crown.com.tw"}:
+            label = soup.find("span", string="內容簡介")
+            panel = label.parent.find_next_sibling("div", class_="mb-10") if label else None
+            if panel:
+                for br in panel.find_all("br"):
+                    br.replace_with("\n")
+                description = clean_description(panel.get_text())
+                if description and len(description) > len(metadata.description or ""):
+                    metadata.description = description
+                    evidence.append("crown-description-panel")
         description_panel = soup.select_one(".woocommerce-Tabs-panel--description#tab-description")
         if description_panel is not None:
             description = clean_description(description_panel.get_text("\n", strip=True))
@@ -157,14 +180,18 @@ class GenericPageParser:
             "translators": [r"(?:譯者|译者)\s*[:：]\s*(.+)"],
             "publisher": [r"(?:出版社|出版者|出版)\s*[:：]\s*(.+)"],
             "published_date": [r"(?:出版日期|出版日|出版時間|更新)\s*[:：]\s*([0-9]{4}[-/.年][0-9]{1,2}(?:[-/.月][0-9]{1,2}日?)?)"],
-            "isbn": [r"(?<![A-Za-z])(?:ISBN13|ISBN)\s*[:：]\s*([0-9Xx-]{10,17})"],
-            "eisbn": [r"(?:eISBN|電子ISBN)\s*[:：]\s*([0-9Xx-]{10,17})"],
             "tags": [r"(?:標籤|标签|類別|类别|分類|分类)\s*[:：]\s*(.+)"],
         }
-        found = False
+        identifiers = extract_labeled_isbns(text)
+        if identifiers.get("eisbn"):
+            metadata.eisbn = metadata.eisbn or identifiers["eisbn"]
+            if metadata.isbn == identifiers["eisbn"]:
+                metadata.isbn = None
+        metadata.isbn = metadata.isbn or identifiers.get("isbn")
+        found = bool(identifiers)
         for field, patterns in label_map.items():
             for pattern in patterns:
-                match = re.search(pattern, text, flags=re.I)
+                match = re.search(r"^\s*" + pattern, text, flags=re.I | re.M)
                 if not match:
                     continue
                 value = clean_text(match.group(1))
@@ -179,10 +206,6 @@ class GenericPageParser:
                     metadata.publisher = value
                 elif field == "published_date" and not metadata.published_date:
                     metadata.published_date = value
-                elif field == "isbn" and not metadata.isbn:
-                    metadata.isbn = normalize_isbn(value)
-                elif field == "eisbn" and not metadata.eisbn:
-                    metadata.eisbn = normalize_isbn(value)
                 elif field == "tags" and not metadata.tags:
                     metadata.tags = short_tags([value])
                 break
@@ -212,11 +235,6 @@ class GenericPageParser:
         labels = [clean_text(node.get_text(" ", strip=True)) for node in soup.select(".info-label span, .info-label-grey, .info-label-yellow")]
         if labels:
             metadata.tags = short_tags([label for label in labels if label and label not in {"已完結", "連載中"}]) or metadata.tags
-            found = True
-
-        updated = soup.select_one(".info-last-time")
-        if updated and not metadata.published_date:
-            metadata.published_date = clean_text(updated.get_text(" ", strip=True))
             found = True
 
         abstract = soup.select_one(".page-abstract-content")
@@ -344,6 +362,24 @@ class GenericPageParser:
                 metadata.description = description
                 found = True
 
+        panel = soup.select_one("#info-content > .list-group-collapse > .collapse > .font-base")
+        if panel:
+            description = clean_description(panel.get_text("\n", strip=True))
+            if description and len(description) > len(metadata.description or ""):
+                metadata.description = description
+                found = True
+                evidence.append("pubu-description-panel")
+
+        if not metadata.authors or all(re.fullmatch(r"\{\d+\}", author) for author in metadata.authors):
+            authors = [person for a in soup.select(".info-name-metaAuthor a[href*='condition=fl_ahr']") for person in split_people(a.get_text(" ", strip=True))]
+            metadata.authors = list(dict.fromkeys(a for a in authors if a))
+            found = True
+
+        isbn = _pubu_visible_field(soup, "ISBN")
+        if isbn and not metadata.isbn:
+            metadata.isbn = normalize_isbn(isbn)
+            found = True
+
         published_date = _pubu_visible_field(soup, "發行")
         if published_date and not metadata.published_date:
             metadata.published_date = published_date
@@ -363,8 +399,8 @@ class GenericPageParser:
         if not (host == "readmoo.com" or host.endswith(".readmoo.com")):
             return
 
-        panel = soup.select_one(".book-description-container .book-description")
-        description = clean_description(panel.get_text("\n", strip=True)) if panel else None
+        panels = soup.select("#book-detail-description p") or soup.select(".book-description-container .book-description")
+        description = clean_description("\n".join(panel.get_text("\n", strip=True) for panel in panels))
         if description and len(description) > len(metadata.description or ""):
             metadata.description = description
             evidence.append("readmoo-description-panel")
@@ -410,9 +446,13 @@ class GenericPageParser:
         if not metadata.publisher:
             metadata.publisher = fields.get("出版社")
             found = found or bool(metadata.publisher)
-        if not metadata.authors and fields.get("作者"):
-            metadata.authors = split_people(fields["作者"])
-            found = found or bool(metadata.authors)
+        if fields.get("作者"):
+            people = split_people(fields["作者"])
+            writers = [re.sub(r"\s*[-－]\s*(?:作|著|文)$", "", name).strip() for name in people
+                       if not re.search(r"[-－]\s*(?:插畫|插画|繪|绘|繪圖|绘图|攝影|摄影)$", name)]
+            if writers:
+                metadata.authors = writers
+                found = True
         if fields.get("譯者") and fields["譯者"] not in {"簡介", "：", ":"}:
             metadata.translators = split_people(fields["譯者"])
             found = found or bool(metadata.translators)

@@ -1,6 +1,23 @@
 from metafinder.sources.generic import GenericPageParser
 
 
+def test_decoded_legacy_charset_page_in_worker_keeps_unicode(capfd):
+    import threading
+
+    html = '''<html><head><meta http-equiv="Content-Type" content="text/html; charset=gb18030">
+    <title>《我的婆婆是重生的[七零]》香酥栗_晋江文学城_【原创小说|言情小说】</title>
+    </head><body>文案\n少女与婆婆共同生活。\n内容标签：</body></html>'''
+    results = []
+    worker = threading.Thread(target=lambda: results.append(GenericPageParser().parse_html(
+        "https://www.jjwxc.net/onebook.php?novelid=6376338", html)))
+    worker.start()
+    worker.join(10)
+    assert not worker.is_alive()
+    assert results[0].metadata.title == "我的婆婆是重生的[七零]"
+    assert results[0].metadata.authors == ["香酥栗"]
+    assert capfd.readouterr().err == ""
+
+
 def test_jjwxc_patch_cleans_wrapped_title_author_and_cover():
     html = """
     <html>

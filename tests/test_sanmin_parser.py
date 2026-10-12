@@ -34,3 +34,14 @@ def test_translator_links_win_over_biography_heading():
     <a>李佳純</a>;<a>薄文承</a></span></h3></li><div>譯者簡介</div>'''
     result = GenericPageParser().parse_html("https://www.sanmin.com.tw/product/index/013039317", page)
     assert result.metadata.translators == ["李佳純", "薄文承"]
+
+
+def test_visible_writer_roles_replace_combined_jsonld_credit():
+    page = '''<h1>廿載．繁華夢</h1><script type="application/ld+json">
+    {"@type":"Book","author":{"@type":"Person","name":"護玄-作；紅麟-插畫"}}</script>
+    <li><h3>作者：<a>護玄-作</a> ; <a>紅麟-插畫</a></h3></li>'''
+    result = GenericPageParser().parse_html("https://www.sanmin.com.tw/product/index/014788921", page)
+    assert result.metadata.authors == ["護玄"]
+    page = '<h1>測試書</h1><li><h3>作者：Jean-Pierre；王文</h3></li>'
+    result = GenericPageParser().parse_html("https://www.sanmin.com.tw/product/index/000000001", page)
+    assert result.metadata.authors == ["Jean-Pierre", "王文"]

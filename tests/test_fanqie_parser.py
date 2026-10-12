@@ -34,7 +34,7 @@ def test_fanqie_page_extracts_book_metadata_from_visible_fields():
     assert candidate.source_kind == "web-novel"
     assert candidate.metadata.title == "冰封了千年的玄門大小姐她融化了"
     assert candidate.metadata.authors == ["悅悅愛瞅瞅"]
-    assert candidate.metadata.published_date == "2024-05-28 19:51"
+    assert candidate.metadata.published_date is None  # 最近更新不是出版日期。
     assert "現代言情" in candidate.metadata.tags
     assert "已完結" not in candidate.metadata.tags
     assert candidate.metadata.cover_url == "https://example.invalid/cover.jpg"

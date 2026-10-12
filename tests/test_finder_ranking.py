@@ -694,7 +694,7 @@ def test_search_keeps_matching_store_link_when_product_page_is_blocked(monkeypat
 
     result = finder.search("高年級實習生")
 
-    assert result[0].metadata.title == "高年級實習生：馬裡亞納海溝跳島記"
+    assert result[0].metadata.title == "高年級實習生：馬里亞納海溝跳島記"
     assert result[0].evidence == ["web-search-result"]
 
 
@@ -958,6 +958,14 @@ def test_readmoo_product_page_prefers_full_description_panel():
     assert "readmoo-description-panel" in candidate.evidence
 
 
+def test_readmoo_detail_description_wins_over_intro_without_adjacent_panels():
+    html = '''<div class="book-description-container"><div class="book-description">短介。</div></div>
+    <div id="book-detail-description"><h2>詳細資訊</h2><p>完整內容第一段。</p><p>第二段。</p></div>
+    <div id="book-detail-recommand"><p>其他推薦內容。</p></div>'''
+    candidate = GenericPageParser().parse_html("https://readmoo.com/book/210229726000101", html)
+    assert candidate.metadata.description == "完整內容第一段。\n第二段。"
+
+
 def test_json_ld_cjk_authors_split_ascii_comma():
     html = """
     <html><head>
@@ -1125,6 +1133,7 @@ def test_search_reserves_time_to_parse_collected_urls(monkeypatch):
     book.source_kind = "store"
     monkeypatch.setattr("metafinder.finder.time.monotonic", lambda: clock[0])
     monkeypatch.setattr("metafinder.finder.search_source_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(finder, "_first_matching_site_candidates", lambda *args, **kwargs: [])
 
     def collect(*args, **kwargs):
         clock[0] = kwargs["deadline"]

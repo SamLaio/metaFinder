@@ -271,7 +271,7 @@ def _query_variants(query: str) -> list[str]:
             for orthographic in _orthographic_query_variants(candidate):
                 if orthographic and orthographic not in variants:
                     variants.append(orthographic)
-                traditional = to_traditional(orthographic or "")
+                traditional = to_traditional(orthographic or "", for_search=True)
                 if traditional and traditional not in variants:
                     variants.append(traditional)
                 simplified = to_simplified_for_search(orthographic or "")

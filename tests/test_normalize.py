@@ -2,6 +2,7 @@ from metafinder.normalize import (
     clean_description,
     clean_text,
     normalize_isbn,
+    extract_labeled_isbns,
     normalize_publisher,
     short_tags,
     split_people,
@@ -23,6 +24,17 @@ def test_normalize_isbn():
     assert normalize_isbn("1230004974352") is None
     assert normalize_isbn("978626315175X") is None
     assert normalize_isbn("9577417477") == "9577417477"
+
+
+def test_explicit_eisbn_labels_formats_and_ambiguity():
+    assert extract_labeled_isbns("ISBN 978-626-7428-59-7 EISBN 978-6267428566（PDF） EISBN 978-6267428573（EPUB）") == {
+        "isbn": "9786267428597", "eisbn": "9786267428573"}
+    for text in ("EISBN (EPUB)：9786269754168", "電子書ISBN　9786269754168", "電子版 ISBN：9786269754168"):
+        assert extract_labeled_isbns(text) == {"eisbn": "9786269754168"}
+    assert extract_labeled_isbns("EISBN：9786269754168 EISBN：9786269817740") == {}
+    assert extract_labeled_isbns("ISBN：4717702110444") == {}
+    assert extract_labeled_isbns("EISBN (PDF)：9786269754168 (EPUB)") == {}
+    assert extract_labeled_isbns("ISBN：9789863845829 (EPUB) ISBN：9789863845782 ( EPUB ) ISBN：9789863845812 ( PDF )") == {}
 
 
 def test_linking_publisher_company_aliases():
@@ -51,9 +63,15 @@ def test_split_people_normalizes_middle_dot_for_chinese_author_names():
 
 
 def test_custom_replacements_apply_after_opencc():
-    assert clean_text("一出") == "一齣"
+    assert clean_text("一出") == "一出"
     assert clean_text("实时") == "即時"
-    assert clean_text("信息") == "資訊"
+    assert clean_text("信息") == "信息"
+
+
+def test_already_traditional_published_names_are_not_reconverted():
+    for text in ('三采文化', '采藝出版', '簡郁璇', '許郁文', '杜筑生', '山本周五郎賞', '安東尼．聖修伯里'):
+        assert clean_text(text) == text
+    assert clean_description('帶回祕密\n\n三采文化') == '帶回祕密\n\n三采文化'
 
 
 def test_normalize_publisher_aliases_match_calibre_db():
@@ -115,6 +133,8 @@ def test_author_region_tags_use_confirmed_names_and_unambiguous_scripts():
     assert author_region_tags(["岡田和人"]) == ["日本"]
     assert author_region_tags(["蔡小雀", "陳鴻圖", "藤井太洋"]) == ["臺灣", "日本"]
     assert "美國" in infer_tags(BookMetadata(authors=["娥蘇拉．勒瑰恩"])).tags
+    assert author_region_tags(["清水晴木", "作者：蒼葵", "愛德華．狄波諾"]) == ["日本", "臺灣", "馬爾他"]
+    assert author_region_tags(["蝸牛"]) == []
 
 
 def test_region_tags_do_not_come_from_local_publisher():
@@ -128,6 +148,14 @@ def test_region_tags_do_not_come_from_local_publisher():
     assert "日本" not in result.tags
     assert "輕小說" in result.tags
     assert "冒險" in result.tags
+
+
+def test_confirmed_batch_author_regions_preserve_ambiguous_names():
+    assert author_region_tags(["鈴木央", "佐島勤", "佐島 勤"]) == ["日本"]
+    assert author_region_tags(["薛西斯", "史邁", "莎莉．索恩"]) == ["臺灣", "中國", "澳洲"]
+    assert author_region_tags(["張貴興", "卡爾．古斯塔夫．榮格", "加布列．賈西亞．馬奎斯"]) == ["馬來西亞", "瑞士", "哥倫比亞"]
+    assert author_region_tags(["R．A．薩爾瓦多", "丹尼斯．鄧肯", "王小明", "小手"]) == ["美國", "英國"]
+    assert infer_tags(BookMetadata(tags=["Swiss", "Malaysian", "Colombian"])).tags[-3:] == ["瑞士", "哥倫比亞", "馬來西亞"]
 
 
 def test_detect_international_award_winner():

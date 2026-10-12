@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
@@ -17,9 +18,10 @@ if zhtranslate_src.exists() and str(zhtranslate_src) not in sys.path:
     sys.path.insert(0, str(zhtranslate_src))
 
 try:
-    from s2tw_converter import Converter as ZhTranslateConverter
+    from s2tw_converter import Converter as ZhTranslateConverter, simplified_pattern
 except Exception:
     ZhTranslateConverter = None
+    simplified_pattern = None
 
 _traditional_converter = None
 _simplified_converter = None
@@ -53,8 +55,8 @@ def _get_simplified_converter():
     return _simplified_converter
 
 
-def to_traditional(text: str | None) -> str | None:
-    if not text:
+def to_traditional(text: str | None, *, for_search: bool = False) -> str | None:
+    if not text or (not for_search and (simplified_pattern is None or not simplified_pattern().search(text))):
         return text
     converter = _get_converter()
     if converter:
@@ -159,6 +161,33 @@ def normalize_isbn(value: str | None) -> str | None:
     if re.fullmatch(r"[0-9]{9}[0-9Xx]", value):
         return value.upper()
     return None
+
+
+def extract_labeled_isbns(text: str) -> dict[str, str]:
+    """Extract explicit labels; prefer EPUB over PDF and reject ambiguous values."""
+    text = unicodedata.normalize("NFKC", text)
+    pattern = (r"(?<![A-Za-z])(?P<label>eISBN|電子(?:書|版)?\s*ISBN|ISBN13|ISBN)"
+               r"\s*(?:\(\s*(?P<before>EPUB|PDF)\s*\))?\s*[:：]?\s*"
+               r"(?P<number>(?:97[89](?:[-\s]*\d){10}|\d(?:[-\s]*\d){8}[-\s]*[\dXx]))"
+               r"(?![-\s]*\d)\s*(?:\(\s*(?P<after>EPUB|PDF)\s*\))?")
+    values: dict[str, set[str]] = {"isbn": set(), "eisbn": set(), "epub": set()}
+    for match in re.finditer(pattern, text, re.I):
+        number = normalize_isbn(match["number"])
+        if not number:
+            continue
+        label = match["label"].casefold().replace(" ", "")
+        kind = "isbn" if label in {"isbn", "isbn13"} else "eisbn"
+        formats = {x.upper() for x in (match["before"], match["after"]) if x}
+        if len(formats) > 1:
+            continue
+        if formats:
+            kind = "eisbn"
+        values[kind].add(number)
+        if "EPUB" in formats:
+            values["epub"].add(number)
+    if values["epub"]:
+        values["eisbn"] = values["epub"]
+    return {kind: next(iter(values[kind])) for kind in ("isbn", "eisbn") if len(values[kind]) == 1}
 
 
 def short_tags(values: Iterable[str]) -> list[str]:

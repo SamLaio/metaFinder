@@ -28,6 +28,17 @@ def test_split_volume_series():
     assert_series("龍王(下)", "龍王", 3.0)
 
 
+def test_explicit_volume_before_subtitle_overrides_chapter_split():
+    assert_series("魔法科高中的劣等生15：古都內亂篇（下）", "魔法科高中的劣等生", 15.0)
+    assert_series("魔法科高中的劣等生０１：入學篇（上）", "魔法科高中的劣等生", 1.0)
+    assert_series("魔法科高中的劣等生（18）：師族會議篇（中）", "魔法科高中的劣等生", 18.0)
+    assert_series("魔法科高中的劣等生19.5：短篇集", "魔法科高中的劣等生", 19.5)
+    assert infer_series_from_title("東京1984：城市記憶") is None
+    assert series_evidence_priority("魔法科高中的劣等生", "title:volume-before-subtitle") > series_evidence_priority(
+        "魔法科高中的劣等生15：古都內亂篇", "title:split-volume"
+    )
+
+
 def test_parenthesized_direct_series_volume():
     assert_series("賊頭大老板 (小肥肥的猛男日記1)", "小肥肥的猛男日記", 1.0)
 

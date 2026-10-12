@@ -37,6 +37,18 @@ def infer_series_from_title(title: str | None) -> SeriesInfo | None:
         return None
     value = _normalize_spaces(title)
 
+    # A subtitle's split marker describes the chapter, not the book's volume.
+    match = re.match(
+        r"^(.+?)(?<![0-9０-９])[（(]?\s*([0-9０-９]{1,3}(?:[.．][0-9０-９]+)?)\s*[）)]?\s*[:：]",
+        value,
+    )
+    if match:
+        series = _clean_series_name(match.group(1))
+        digits = match.group(2).translate(str.maketrans("０１２３４５６７８９．", "0123456789."))
+        index = float(digits)
+        if len(series) >= 3 and index > 0:
+            return SeriesInfo(series, index, "volume-before-subtitle")
+
     patterns = [
         (r"～\s*([A-Za-z][A-Za-z ]+?)\s*NO\.?\s*([0-9]+)", "latin-no"),
         (r"[【\[]\s*([^】\]]+?)\s*PART\s*([0-9]+)\s*[】\]]", "bracket-part"),
@@ -101,6 +113,7 @@ def series_evidence_priority(series_name: str, evidence: str) -> int:
             "series-zh-ordinal",
             "latin-no",
             "title-part",
+            "volume-before-subtitle",
         )
     ):
         return 90
