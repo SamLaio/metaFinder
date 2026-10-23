@@ -64,6 +64,16 @@ class GenericPageParser:
         self._extract_fallback_metadata(soup, url, metadata, evidence)
         self._cleanup(metadata)
 
+        parsed_url = urlparse(url)
+        if parsed_url.hostname in {"readmoo.com", "www.readmoo.com"} and parsed_url.path.startswith("/search"):
+            raise ValueError("Readmoo搜尋列表不是單本書籍頁，請提供商品網址")
+        if (
+            parsed_url.hostname in {"pubu.com.tw", "www.pubu.com.tw"}
+            and (metadata.title or "").lower() == "pubu"
+            and not (metadata.isbn or metadata.eisbn)
+        ):
+            raise ValueError("Pubu回傳商店通用頁，沒有可核實書籍資料")
+
         if not urlparse(url).path.strip("/") and not (
             metadata.authors or metadata.publisher or metadata.isbn or metadata.eisbn
         ):
@@ -112,6 +122,18 @@ class GenericPageParser:
     def _extract_fallback_metadata(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
         self._from_visible_labels(soup, metadata, evidence)
         self._from_images(soup, url, metadata, evidence)
+        host = (urlparse(url).hostname or "").removeprefix("www.").removeprefix("mail.")
+        publisher_panels = {
+            "acornbooks.com.tw": (".mainbookscontact", "acornbooks-description-panel"),
+            "bookrep.com.tw": (".nrjj_c_box > .nrjj_c", "bookrep-description-panel"),
+        }
+        if host in publisher_panels:
+            selector, marker = publisher_panels[host]
+            panel = soup.select_one(selector)
+            description = clean_description(panel.get_text("\n", strip=True)) if panel is not None else None
+            if description and not _looks_like_catalog_fact_sheet(description):
+                metadata.description = description
+                evidence.append(marker)
         if urlparse(url).netloc.lower() in {"crown.com.tw", "www.crown.com.tw"}:
             label = soup.find("span", string="內容簡介")
             panel = label.parent.find_next_sibling("div", class_="mb-10") if label else None
