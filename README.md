@@ -86,3 +86,24 @@ metafinder-import-replacements .\words.tsv
 測試：`python -m pytest -q`。授權：GNU GPL v3，見 [LICENSE](LICENSE)。
 
 設計參考：[chihchun/library-helper](https://github.com/chihchun/library-helper)，參考站點規則分層與搜尋出口設計，非執行時相依。
+
+## 第三方來源與致謝
+
+### 實際使用的套件
+
+| 專案／作者 | 使用範圍 | 上游授權 |
+| --- | --- | --- |
+| [Beautiful Soup／Leonard Richardson](https://www.crummy.com/software/BeautifulSoup/) | HTML 解析與欄位擷取 | MIT |
+| [lxml](https://github.com/lxml/lxml) | HTML／XML 解析 | BSD-3-Clause；底層元件另依各自授權 |
+| [Requests](https://github.com/psf/requests) | HTTP 請求 | Apache-2.0 |
+| [opencc-python-reimplemented／Yichen](https://github.com/yichen0831/opencc-python) | 專案宣告的簡繁轉換相依 | Apache-2.0 |
+| [OpenCC／BYVoid 與貢獻者](https://github.com/BYVoid/OpenCC) | 上述 Python 實作使用的轉換設定與字典來源 | Apache-2.0 |
+| [zhTranslate](https://github.com/SamLaio/zhTranslate) | 共用臺灣正體轉換與自訂詞；可選整合 | GPL-3.0-or-later |
+
+### 設計參考與資料來源
+
+- [chihchun/library-helper](https://github.com/chihchun/library-helper)：參考站點規則集中管理、頁面抽取分層與搜尋出口設計；不是執行時相依。
+- [Open Library](https://openlibrary.org/developers/api)（Internet Archive）：ISBN 輔助查找資料與封面來源；資料服務不代表本專案擁有書目或圖片著作權。
+- 出版社、書店、館藏與作品網站提供候選書目；每筆結果以 `source_name`、`source_url`、`evidence` 保留查證線索，詳見 [書目規則](docs/metadata.md)。引用商品資料不等於取得封面或內文的再授權。
+
+本專案授權不取代第三方套件、字典及資料的原授權。上表列主要直接相依與來源，完整版本依安裝環境及 `pyproject.toml`；轉遞相依仍保留其套件內授權。
