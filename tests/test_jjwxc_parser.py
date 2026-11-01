@@ -38,6 +38,21 @@ def test_jjwxc_patch_cleans_wrapped_title_author_and_cover():
     assert "jjwxc-page" in candidate.evidence
 
 
+def test_jjwxc_drama_label_is_not_part_of_book_title_or_author():
+    for label in ("剧集: 月上重火", "劇集：月上重火"):
+        html = f"<title>《月上重火》君子以泽_{label}_晋江文学城_【原创小说|言情小说】</title>"
+        result = GenericPageParser().parse_html("https://www.jjwxc.net/onebook.php?novelid=349371", html)
+        assert result.metadata.title == "月上重火"
+        assert result.metadata.authors == ["君子以澤"]
+
+
+def test_jjwxc_drama_rule_does_not_apply_to_other_sites():
+    title = "《月上重火》君子以泽_剧集: 月上重火_晋江文学城"
+    result = GenericPageParser().parse_html("https://example.org/book/1", f"<title>{title}</title>")
+    assert result.metadata.title != "月上重火"
+    assert "jjwxc-page" not in result.evidence
+
+
 def test_jjwxc_patch_extracts_description_and_tags():
     html = """
     <html>

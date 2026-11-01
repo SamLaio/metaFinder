@@ -45,3 +45,13 @@ def test_visible_writer_roles_replace_combined_jsonld_credit():
     page = '<h1>測試書</h1><li><h3>作者：Jean-Pierre；王文</h3></li>'
     result = GenericPageParser().parse_html("https://www.sanmin.com.tw/product/index/000000001", page)
     assert result.metadata.authors == ["Jean-Pierre", "王文"]
+
+
+def test_space_separated_creator_roles_exclude_illustrator_and_designer():
+    for credit in ("林伍德．巴克萊 作；王志弘 繪", "林伍德．巴克萊 著；王志弘 裝幀設計"):
+        page = f'<h1>目擊者</h1><li><h3>作者：{credit}</h3></li>'
+        result = GenericPageParser().parse_html("https://www.sanmin.com.tw/product/index/006197813", page)
+        assert result.metadata.authors == ["林伍德．巴克萊"]
+    page = '<h1>測試書</h1><li><h3>作者：Jean-Pierre；王文；林繪；John Doe</h3></li>'
+    result = GenericPageParser().parse_html("https://www.sanmin.com.tw/product/index/000000001", page)
+    assert result.metadata.authors == ["Jean-Pierre", "王文", "林繪", "John Doe"]

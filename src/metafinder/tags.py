@@ -55,6 +55,7 @@ REGION_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
 # Only confirmed authors and unambiguous scripts belong here.  Chinese names and
 # Latin names require source evidence rather than a nationality guess.
 AUTHOR_REGION_OVERRIDES: dict[str, str] = {
+    "君子以澤": "中國",  # 百度百科同名作者條目明列國籍，非依筆名猜測。
     "郭恆鈺": "德國",  # 淡江時報447期明載43歲取得德國國籍。
     "娥蘇拉．勒瑰恩": "美國",
     "陳鴻圖": "臺灣",

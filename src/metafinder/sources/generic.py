@@ -120,9 +120,29 @@ class GenericPageParser:
             patch(soup, url, metadata, evidence)
 
     def _extract_fallback_metadata(self, soup: BeautifulSoup, url: str, metadata: BookMetadata, evidence: list[str]) -> None:
-        self._from_visible_labels(soup, metadata, evidence)
+        label_soup = soup
+        if (urlparse(url).hostname or "").removeprefix("www.") == "readmoo.com":
+            label_soup = BeautifulSoup(str(soup), "lxml")
+            for recommendation in label_soup.select('.listItem-box, [itemtype$="/ItemList"]'):
+                recommendation.decompose()
+        self._from_visible_labels(label_soup, metadata, evidence)
         self._from_images(soup, url, metadata, evidence)
         host = (urlparse(url).hostname or "").removeprefix("www.").removeprefix("mail.")
+        if host == "cite.com.tw" and urlparse(url).path == "/book":
+            for panel in soup.select(".font08.pre-wrap"):
+                match = re.search(r"(?:^|[\r\n])\s*譯者\s*[:：]\s*([^\r\n]+)", panel.get_text("", strip=False))
+                people = split_people(match.group(1)) if match else []
+                if people and set(metadata.translators).issubset(people):
+                    metadata.translators = people
+                    evidence.append("cite-linked-translators")
+                    break
+        if host == "reading.udn.com" and re.fullmatch(r"/story/products/\d+/?", urlparse(url).path) and not metadata.authors:
+            heading = soup.find("h1")
+            byline = heading.find_next("h3") if heading else None
+            author = byline.select_one('a[title][href^="/story/search/"]') if byline else None
+            if author and clean_text(author.get("title")) == clean_text(author.get_text(" ", strip=True)):
+                metadata.authors = [clean_text(author.get("title"))]
+                evidence.append("udn-story-author")
         publisher_panels = {
             "acornbooks.com.tw": (".mainbookscontact", "acornbooks-description-panel"),
             "bookrep.com.tw": (".nrjj_c_box > .nrjj_c", "bookrep-description-panel"),
@@ -150,6 +170,30 @@ class GenericPageParser:
             if description and not _looks_like_catalog_fact_sheet(description):
                 metadata.description = description
                 evidence.append("woocommerce-description-panel")
+
+        if urlparse(url).hostname == "reading.udn.com" and urlparse(url).path.endswith("/store_product.do"):
+            for section in soup.select(".detail-section"):
+                heading = section.select_one("h2")
+                panel = section.select_one(".detail-paragraph")
+                if not heading or heading.get_text(strip=True) != "簡介" or panel is None:
+                    continue
+                text = panel.get_text("\n", strip=True)
+                translator = re.search(r"(?:^|\n)譯者簡介\s*\n([^\n]+)", text)
+                if translator and not metadata.translators:
+                    metadata.translators = split_people(translator.group(1))
+                description = re.split(r"(?:^|\n)(?:作者|譯者)簡介(?:\n|$)", text, maxsplit=1)[0]
+                metadata.description = clean_description(description) or metadata.description
+                evidence.append("udn-description-panel")
+                break
+            fields = {}
+            for row in soup.select(".public-info"):
+                label = row.select_one(".public-info__heading")
+                value = row.select_one(".public-info__txt")
+                if label and value:
+                    fields[label.get_text(strip=True)] = value.get_text(strip=True)
+            metadata.isbn = normalize_isbn(fields.get("ISBN")) or metadata.isbn
+            metadata.eisbn = normalize_isbn(fields.get("EISBN")) or metadata.eisbn
+            metadata.published_date = fields.get("線上出版日期") or fields.get("出版日期") or metadata.published_date
 
     def _from_json_ld(self, soup: BeautifulSoup, metadata: BookMetadata, evidence: list[str]) -> None:
         for script in soup.find_all("script", type=lambda t: t and "ld+json" in t):
@@ -280,7 +324,7 @@ class GenericPageParser:
 
         found = False
         page_title = soup.title.get_text(" ", strip=True) if soup.title else ""
-        match = re.search(r"《([^》]+)》\s*([^_《》]+)?_?(?:晋江文学城|晉江文學城)", page_title)
+        match = re.search(r"《([^》]+)》\s*([^_《》]+)?_?(?:(?:剧集|劇集)\s*[:：][^_]+_)?(?:晋江文学城|晉江文學城)", page_title)
         if match:
             metadata.title = clean_title(match.group(1)) or metadata.title
             author = clean_text(match.group(2))
@@ -470,8 +514,8 @@ class GenericPageParser:
             found = found or bool(metadata.publisher)
         if fields.get("作者"):
             people = split_people(fields["作者"])
-            writers = [re.sub(r"\s*[-－]\s*(?:作|著|文)$", "", name).strip() for name in people
-                       if not re.search(r"[-－]\s*(?:插畫|插画|繪|绘|繪圖|绘图|攝影|摄影)$", name)]
+            writers = [re.sub(r"(?:\s*[-－]\s*|\s+)(?:作|著|文)$", "", name).strip() for name in people
+                       if not re.search(r"(?:[-－]\s*|\s+)(?:插畫|插画|繪|绘|繪圖|绘图|攝影|摄影|裝幀設計|装帧设计)$", name)]
             if writers:
                 metadata.authors = writers
                 found = True
