@@ -128,6 +128,16 @@ class GenericPageParser:
         self._from_visible_labels(label_soup, metadata, evidence)
         self._from_images(soup, url, metadata, evidence)
         host = (urlparse(url).hostname or "").removeprefix("www.").removeprefix("mail.")
+        if host == "xxsy.net" and re.fullmatch(r"/book/\d+/?", urlparse(url).path):
+            heading = soup.find("h1")
+            author = soup.select_one(".author-profile .p-name")
+            panel = soup.select_one("#book_intro")
+            if heading and author and panel:
+                metadata.title = clean_text(heading.get_text(" ", strip=True))
+                metadata.authors = split_people(author.get_text(" ", strip=True))
+                metadata.description = clean_description(panel.get_text("\n", strip=True)) or metadata.description
+                metadata.publisher = "網版"
+                evidence.append("xxsy-book-profile")
         if host == "cite.com.tw" and urlparse(url).path == "/book":
             for panel in soup.select(".font08.pre-wrap"):
                 match = re.search(r"(?:^|[\r\n])\s*譯者\s*[:：]\s*([^\r\n]+)", panel.get_text("", strip=False))
@@ -147,6 +157,8 @@ class GenericPageParser:
             "acornbooks.com.tw": (".mainbookscontact", "acornbooks-description-panel"),
             "bookrep.com.tw": (".nrjj_c_box > .nrjj_c", "bookrep-description-panel"),
         }
+        if host == "locuspublishing.com" and re.fullmatch(r"/book/detail/\d+/?", urlparse(url).path):
+            publisher_panels[host] = (".book_com .editor_box", "locus-description-panel")
         if host in publisher_panels:
             selector, marker = publisher_panels[host]
             panel = soup.select_one(selector)
@@ -466,7 +478,9 @@ class GenericPageParser:
             return
 
         panels = soup.select("#book-detail-description p") or soup.select(".book-description-container .book-description")
-        description = clean_description("\n".join(panel.get_text("\n", strip=True) for panel in panels))
+        text = "\n".join(panel.get_text("\n", strip=True) for panel in panels)
+        text = re.split(r"(?:^|\n)(?:作者|譯者)(?:介紹|簡介)(?:\n|$)", text, maxsplit=1)[0]
+        description = clean_description(text)
         if description and len(description) > len(metadata.description or ""):
             metadata.description = description
             evidence.append("readmoo-description-panel")
