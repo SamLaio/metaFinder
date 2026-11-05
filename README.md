@@ -43,6 +43,8 @@ metafinder search "9786263151758" --download-cover .\cover.jpg
 
 先檢查候選與版本，再決定是否下載封面。下載指令會寫入指定的圖片路徑；不會替換書庫封面。
 
+`--max-search-seconds` 只限制候選查找，不包含後續封面下載。下載會從候選排名依序選第一個有封面網址的項目，以獨立的 30 秒 HTTP 請求逾時取得圖片；沒有封面網址或下載失敗時會報錯，不會自動生成封面。目標圖片已存在時會覆寫，請自行選擇新路徑保存。
+
 ## 如何閱讀結果
 
 未加 `--json` 時顯示精簡表格；JSON 最外層為候選陣列。每個候選包含：
@@ -70,6 +72,8 @@ metafinder search "9786263151758" --download-cover .\cover.jpg
 ## 簡轉正與自訂詞
 
 書目文字只在共用轉換層偵測到明確簡體時轉為臺灣正體。一般使用者請先安裝 [zhTranslate](https://github.com/SamLaio/zhTranslate)，讓 Python 可匯入 `s2tw_converter`。本機另支援從 `D:\github\zhTranslate\src` 載入；無法載入時保留原文字。
+
+這不是全書引號清理：已正體、沒有明確簡體的書目欄位可能保留原引號。搜尋用字形變體與實際回傳書目分開處理；需要只整理引號時，呼叫端可使用 zhTranslate 的 `normalize_quotes`。
 
 匯入 `原詞<TAB>正體詞` 格式的文字檔：
 
