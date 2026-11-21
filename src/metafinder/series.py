@@ -37,6 +37,12 @@ def infer_series_from_title(title: str | None) -> SeriesInfo | None:
         return None
     value = _normalize_spaces(title)
 
+    from .normalize import numbered_split_volume_title
+
+    split = numbered_split_volume_title(value)
+    if split:
+        return SeriesInfo(split.series_title, split.series_index, "numbered-split-volume")
+
     # A subtitle's split marker describes the chapter, not the book's volume.
     match = re.match(
         r"^(.+?)(?<![0-9０-９])[（(]?\s*([0-9０-９]{1,3}(?:[.．][0-9０-９]+)?)\s*[）)]?\s*[:：]",

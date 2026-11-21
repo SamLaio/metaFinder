@@ -26,6 +26,9 @@ def test_title_part_series():
 
 def test_split_volume_series():
     assert_series("龍王(下)", "龍王", 3.0)
+    assert_series("境界線上的地平線Ⅺ〈上〉", "境界線上的地平線", 11.1)
+    assert_series("境界線上的地平線XI（中）", "境界線上的地平線", 11.2)
+    assert_series("境界線上的地平線 11〈下〉", "境界線上的地平線", 11.3)
 
 
 def test_explicit_volume_before_subtitle_overrides_chapter_split():

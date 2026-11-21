@@ -82,12 +82,42 @@ def test_normalize_publisher_aliases_match_calibre_db():
     assert normalize_publisher("英屬維京群島商高寶國際有限公司台灣分公司") == "高寶"
 
 
+def test_explicit_chinese_volume_titles_preserve_volume_caption():
+    for title, expected, series, volume in [
+        ("廢墟戰隊招笑連者 第一卷", "01 廢墟戰隊招笑連者", "廢墟戰隊招笑連者", 1),
+        ("時間的盡頭的菲布拉莉 第一卷 紅移世界", "01 時間的盡頭的菲布拉莉 紅移世界", "時間的盡頭的菲布拉莉", 1),
+        ("作品 第十二冊", "12 作品", "作品", 12),
+        ("作品 第２集", "02 作品", "作品", 2),
+    ]:
+        info = volume_title_from_trailing_number(title)
+        assert (info.display_title, info.series_title, info.series_index) == (expected, series, volume)
+        assert volume_title_from_trailing_number(info.display_title) is None
+    for title in ("我的第一卷故事", "作品 第一卷的故事", "作品 第零卷", "作品 第一二卷"):
+        assert volume_title_from_trailing_number(title) is None
+
+
 def test_volume_title_from_trailing_number():
     info = volume_title_from_trailing_number("瞬間治癒卻被當成廢物踢出隊伍的天才治療師，改當無照治療師快樂過活8")
     assert info is not None
     assert info.display_title == "08 瞬間治癒卻被當成廢物踢出隊伍的天才治療師，改當無照治療師快樂過活"
     assert info.series_title == "瞬間治癒卻被當成廢物踢出隊伍的天才治療師，改當無照治療師快樂過活"
     assert info.series_index == 8.0
+
+
+def test_numbered_split_volume_titles_use_fixed_part_suffix():
+    for raw, expected, index in [
+        ("境界線上的地平線Ⅺ〈上〉", "11-1 境界線上的地平線", 11.1),
+        ("境界線上的地平線XI（中）", "11-2 境界線上的地平線", 11.2),
+        ("境界線上的地平線 11〈下〉", "11-3 境界線上的地平線", 11.3),
+        ("境界線上的地平線Ⅶ〈中", "07-2 境界線上的地平線", 7.2),
+        ("境界線上的地平線 01 (下)", "01-3 境界線上的地平線", 1.3),
+    ]:
+        info = volume_title_from_trailing_number(raw)
+        assert info.display_title == expected
+        assert info.series_index == index
+        assert volume_title_from_trailing_number(expected) is None
+    for raw in ("小說（上）", "東京1984下", "山上下", "小說0(上)", "MAGIC上"):
+        assert volume_title_from_trailing_number(raw) is None
 
 
 def test_infer_tags_from_metadata_text():

@@ -215,12 +215,44 @@ class VolumeTitle:
     series_index: float
 
 
+def numbered_split_volume_title(title: str | None) -> VolumeTitle | None:
+    """解析明示卷數與上中下冊；呼叫端仍須核實實際出版分冊。"""
+    value = unicodedata.normalize("NFKC", clean_title(title) or "")
+    if re.match(r"^\d{2,3}(?:-[123])?\s+", value):
+        return None
+    match = re.fullmatch(r"(.+?)(?<![0-9])\s*(?:第\s*)?([0-9]{1,3}|[IVXLC]+)\s*(?:卷|集|冊)?\s*[（(〈<【]?\s*(上|中|下)\s*[）)〉>】]?", value)
+    if not match:
+        return None
+    if re.fullmatch(r"[IVXLC]+", match[2]) and re.search(r"[A-Za-z]$", match[1].strip()):
+        return None
+    from .series import _number
+
+    volume = _number(match[2])
+    if not volume or volume > 999:
+        return None
+    base = clean_title(match[1])
+    part = {"上": 1, "中": 2, "下": 3}[match[3]]
+    return VolumeTitle(f"{volume:02d}-{part} {base}", base, volume + part / 10)
+
+
 def volume_title_from_trailing_number(title: str | None) -> VolumeTitle | None:
-    """Convert titles like '書名12' or '書名(12)' to '12 書名'."""
+    """將尾端數字或明確的「書名 第一卷」轉為前置集數，保留冊名。"""
 
     title = clean_title(title)
     if not title:
         return None
+    split = numbered_split_volume_title(title)
+    if split:
+        return split
+    ordinal = re.fullmatch(r"(.+?)\s+第\s*([0-9０-９一二兩三四五六七八九十]+)\s*[卷冊集](?:\s+(.+))?", title)
+    if ordinal and not re.match(r"^\d{2}\s+", title):
+        from .series import _number
+
+        volume = _number(ordinal[2])
+        if volume and volume <= 999:
+            series_title = clean_title(ordinal[1])
+            suffix = f" {ordinal[3]}" if ordinal[3] else ""
+            return VolumeTitle(f"{volume:02d} {series_title}{suffix}", series_title, float(volume))
     match = re.match(r"^(.+?)\s*[\(（]?\s*(\d{1,3})(?:\s*[\)）])?\s*$", title)
     if not match:
         return None
